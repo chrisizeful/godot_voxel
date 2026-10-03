@@ -7,7 +7,9 @@
 #include "../util/math/color8.h"
 #include "../util/math/conv.h"
 #include "../util/profiling.h"
+#include "floating_chunks.h"
 #include "funcs.h"
+#include "../util/godot/core/dictionary.h"
 
 #ifdef ZN_GODOT
 #include "../util/godot/core/class_db.h"
@@ -242,6 +244,104 @@ void VoxelTool::sdf_stamp_erase(const VoxelBuffer &stamp, Vector3i pos) {
 	});
 
 	_post_edit(box);
+}
+
+namespace {
+// Smallest SDF reliably above zero once quantized to 16 bits.
+const float ISLAND_SURFACE_CLEARANCE = 0.1f;
+} // namespace
+
+Array VoxelTool::detach_floating_islands(
+		const Box3i seed_box,
+		const uint32_t max_island_voxels,
+		const uint8_t p_channels_mask,
+		const int padding
+) {
+	ZN_PROFILE_SCOPE();
+	ZN_ASSERT_RETURN_V(padding >= 0, Array());
+
+	const VoxelBuffer::ChannelId channel = get_channel();
+	const uint8_t channels_mask = p_channels_mask | (1 << channel);
+	const StdVector<StdVector<Vector3i>> islands = find_floating_islands(*this, seed_box, max_island_voxels);
+
+	Array results;
+	for (const StdVector<Vector3i> &island : islands) {
+		Vector3i min_pos = island[0];
+		Vector3i max_pos = island[0];
+		Vector3 center;
+		for (const Vector3i pos : island) {
+			min_pos = math::min(min_pos, pos);
+			max_pos = math::max(max_pos, pos);
+			center += Vector3(pos);
+		}
+		center /= island.size();
+		const Box3i island_box = Box3i::from_min_max(min_pos, max_pos + Vector3i(1, 1, 1));
+
+		// Membership mask over the island's bounds, to tell its voxels apart from other solid voxels nearby.
+		StdVector<uint8_t> in_island(Vector3iUtil::get_volume_u64(island_box.size), 0);
+		for (const Vector3i pos : island) {
+			in_island[Vector3iUtil::get_zxy_index(pos - min_pos, island_box.size)] = 1;
+		}
+
+		const Vector3i origin = min_pos - Vector3iUtil::create(padding);
+		Ref<godot::VoxelBuffer> voxels_ref;
+		voxels_ref.instantiate();
+		VoxelBuffer &voxels = voxels_ref->get_buffer();
+		voxels.create(island_box.size + Vector3iUtil::create(2 * padding));
+		copy(origin, voxels, channels_mask, false);
+
+		// Clear any solid (or exactly-zero, see below) voxel that isn't part of this island, so it meshes on its own.
+		Box3i(Vector3i(), voxels.get_size()).for_each_cell_zxy([&](const Vector3i local) {
+			const Vector3i island_local = local + origin - min_pos;
+			if (Box3i(Vector3i(), island_box.size).contains(island_local) &&
+				in_island[Vector3iUtil::get_zxy_index(island_local, island_box.size)] != 0) {
+				return;
+			}
+			if (channel == VoxelBuffer::CHANNEL_SDF) {
+				const float sdf = voxels.get_voxel_f(local.x, local.y, local.z, channel);
+				if (sdf < 0.f) {
+					voxels.set_voxel_f(constants::SDF_FAR_OUTSIDE, local, channel);
+				} else if (sdf == 0.f) {
+					voxels.set_voxel_f(ISLAND_SURFACE_CLEARANCE, local, channel);
+				}
+			} else if (voxels.get_voxel(local, channel) != _eraser_value) {
+				voxels.set_voxel(_eraser_value, local, channel);
+			}
+		});
+
+		// Erase from the volume only after copying, as one edit per island.
+		for (const Vector3i pos : island) {
+			if (channel == VoxelBuffer::CHANNEL_SDF) {
+				_set_voxel_f(pos, constants::SDF_FAR_OUTSIDE);
+			} else {
+				_set_voxel(pos, _eraser_value);
+			}
+		}
+		const Box3i erased_box = island_box.padded(1);
+		if (channel == VoxelBuffer::CHANNEL_SDF) {
+			// Voxels that sat exactly on the island's surface are left at 0 among air, and Transvoxel still emits
+			// tiny triangles around those, which would linger as invisible colliders. Nudge them outside.
+			erased_box.for_each_cell_zxy([&](const Vector3i pos) {
+				const Vector3i island_local = pos - min_pos;
+				if (Box3i(Vector3i(), island_box.size).contains(island_local) &&
+					in_island[Vector3iUtil::get_zxy_index(island_local, island_box.size)] != 0) {
+					return;
+				}
+				if (_get_voxel_f(pos) == 0.f) {
+					_set_voxel_f(pos, ISLAND_SURFACE_CLEARANCE);
+				}
+			});
+		}
+		_post_edit(erased_box);
+
+		Dictionary result;
+		result["voxels"] = voxels_ref;
+		result["origin"] = origin;
+		result["voxel_count"] = static_cast<int64_t>(island.size());
+		result["center"] = center;
+		results.append(result);
+	}
+	return results;
 }
 
 void VoxelTool::do_box(Vector3i begin, Vector3i end) {
@@ -671,6 +771,13 @@ void VoxelTool::_b_set_voxel_metadata(Vector3i pos, Variant meta) {
 	return set_voxel_metadata(pos, meta);
 }
 
+Array VoxelTool::_b_detach_floating_islands(AABB seed_box, int max_island_voxels, int channels_mask, int padding) {
+	ZN_ASSERT_RETURN_V(max_island_voxels > 0, Array());
+	const Vector3i minp = math::floor_to_int(seed_box.position);
+	const Vector3i maxp = math::ceil_to_int(seed_box.position + seed_box.size);
+	return detach_floating_islands(Box3i::from_min_max(minp, maxp), max_island_voxels, channels_mask, padding);
+}
+
 bool VoxelTool::_b_is_area_editable(AABB box) const {
 	const Vector3i minp = math::floor_to_int(box.position);
 	const Vector3i maxp = math::ceil_to_int(box.position + box.size);
@@ -818,6 +925,12 @@ void VoxelTool::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_raycast_normal_enabled", "enabled"), &VoxelTool::set_raycast_normal_enabled);
 
 	ClassDB::bind_method(D_METHOD("is_area_editable", "box"), &VoxelTool::_b_is_area_editable);
+	ClassDB::bind_method(
+			D_METHOD("detach_floating_islands", "seed_box", "max_island_voxels", "channels_mask", "padding"),
+			&VoxelTool::_b_detach_floating_islands,
+			DEFVAL(0),
+			DEFVAL(2)
+	);
 
 	// Encoding helpers
 	ClassDB::bind_static_method(VoxelTool::get_class_static(), D_METHOD("color_to_u16", "color"), &_b_color_to_u16);

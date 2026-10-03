@@ -10,9 +10,12 @@
 #include "../util/godot/classes/shader.h"
 #include "../util/godot/classes/shader_material.h"
 #include "../util/godot/classes/timer.h"
+#include "../util/containers/std_unordered_map.h"
+#include "../util/containers/std_unordered_set.h"
 #include "../util/island_finder.h"
 #include "../util/profiling.h"
 #include "voxel_tool.h"
+#include <memory>
 
 #ifdef ZN_GODOT
 #include "../util/godot/core/callable_mp.h"
@@ -502,6 +505,142 @@ Array separate_floating_chunks(
 	}
 
 	return nodes;
+}
+
+namespace {
+
+// Reads voxels from a VoxelTool in cached tiles, so a flood fill doesn't pay a volume lookup per voxel.
+class IslandSampler {
+public:
+	enum Result { UNKNOWN, EMPTY, SOLID };
+
+	IslandSampler(const VoxelTool &voxel_tool) :
+			_voxel_tool(voxel_tool),
+			_channel(voxel_tool.get_channel()),
+			_eraser_value(voxel_tool.get_eraser_value()) {}
+
+	Result sample(const Vector3i pos) {
+		const Vector3i tile_pos(pos.x >> TILE_SIZE_PO2, pos.y >> TILE_SIZE_PO2, pos.z >> TILE_SIZE_PO2);
+		auto it = _tiles.find(tile_pos);
+		if (it == _tiles.end()) {
+			it = _tiles.insert({ tile_pos, load_tile(tile_pos) }).first;
+		}
+		const VoxelBuffer *tile = it->second.get();
+		if (tile == nullptr) {
+			return UNKNOWN;
+		}
+		const Vector3i local = pos - (tile_pos << TILE_SIZE_PO2);
+		return is_solid(*tile, local, _channel, _eraser_value) ? SOLID : EMPTY;
+	}
+
+	static bool is_solid(const VoxelBuffer &voxels, const Vector3i pos, const VoxelBuffer::ChannelId channel,
+			const uint64_t eraser_value) {
+		if (channel == VoxelBuffer::CHANNEL_SDF) {
+			return voxels.get_voxel_f(pos.x, pos.y, pos.z, channel) < 0.f;
+		}
+		return voxels.get_voxel(pos, channel) != eraser_value;
+	}
+
+private:
+	static constexpr int TILE_SIZE_PO2 = 4;
+
+	std::unique_ptr<VoxelBuffer> load_tile(const Vector3i tile_pos) const {
+		const Box3i box(tile_pos << TILE_SIZE_PO2, Vector3iUtil::create(1 << TILE_SIZE_PO2));
+		// Unloaded or out-of-bounds tiles are unknown, which the flood fill treats as solid ground.
+		if (!_voxel_tool.is_area_editable(box)) {
+			return nullptr;
+		}
+		std::unique_ptr<VoxelBuffer> tile = std::make_unique<VoxelBuffer>(VoxelBuffer::ALLOCATOR_POOL);
+		tile->create(box.size);
+		_voxel_tool.copy(box.position, *tile, 1 << _channel, false);
+		return tile;
+	}
+
+	const VoxelTool &_voxel_tool;
+	const VoxelBuffer::ChannelId _channel;
+	const uint64_t _eraser_value;
+	StdUnorderedMap<Vector3i, std::unique_ptr<VoxelBuffer>> _tiles;
+};
+
+} // namespace
+
+StdVector<StdVector<Vector3i>> find_floating_islands(
+		const VoxelTool &voxel_tool,
+		const Box3i seed_box,
+		const uint32_t max_island_voxels
+) {
+	ZN_PROFILE_SCOPE();
+
+	// Down is pushed last so the fill pops it first, which tends to reach solid ground quickly.
+	static const Vector3i neighbors[6] = {
+		Vector3i(0, 1, 0), Vector3i(-1, 0, 0), Vector3i(1, 0, 0),
+		Vector3i(0, 0, -1), Vector3i(0, 0, 1), Vector3i(0, -1, 0),
+	};
+
+	IslandSampler sampler(voxel_tool);
+	StdUnorderedSet<Vector3i> anchored;
+	StdUnorderedSet<Vector3i> claimed;
+	StdVector<StdVector<Vector3i>> islands;
+
+	StdUnorderedSet<Vector3i> visited;
+	StdVector<Vector3i> stack;
+	StdVector<Vector3i> island;
+
+	seed_box.for_each_cell_zxy([&](const Vector3i seed) {
+		if (anchored.count(seed) != 0 || claimed.count(seed) != 0) {
+			return;
+		}
+		if (sampler.sample(seed) != IslandSampler::SOLID) {
+			return;
+		}
+
+		visited.clear();
+		stack.clear();
+		island.clear();
+		visited.insert(seed);
+		stack.push_back(seed);
+		island.push_back(seed);
+		bool is_anchored = false;
+
+		while (!stack.empty() && !is_anchored) {
+			const Vector3i pos = stack.back();
+			stack.pop_back();
+
+			for (const Vector3i offset : neighbors) {
+				const Vector3i npos = pos + offset;
+				if (visited.count(npos) != 0) {
+					continue;
+				}
+				if (anchored.count(npos) != 0) {
+					is_anchored = true;
+					break;
+				}
+				const IslandSampler::Result result = sampler.sample(npos);
+				if (result == IslandSampler::UNKNOWN) {
+					is_anchored = true;
+					break;
+				}
+				if (result == IslandSampler::SOLID) {
+					if (island.size() >= max_island_voxels) {
+						is_anchored = true;
+						break;
+					}
+					visited.insert(npos);
+					stack.push_back(npos);
+					island.push_back(npos);
+				}
+			}
+		}
+
+		if (is_anchored) {
+			anchored.insert(island.begin(), island.end());
+		} else {
+			claimed.insert(island.begin(), island.end());
+			islands.push_back(island);
+		}
+	});
+
+	return islands;
 }
 
 } // namespace zylann::voxel

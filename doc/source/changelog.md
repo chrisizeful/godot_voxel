@@ -24,6 +24,8 @@ I try to minimize breaking changes, but there are usually a few in each release 
 - Improvements
     - Added compute shader caching (thanks to chalecampb #866)
     - `VoxelNode`: exposes `get_voxel_tool` instead of it being repeated in its child classes.
+    - `VoxelTerrain`: added `is_area_mesh_up_to_date`, to wait for meshes and colliders to catch up with edits.
+    - `VoxelTool`: added `detach_floating_islands`, which flood-fills from an edited area to find and remove voxels that are no longer attached to anything, and returns them as buffers. Works with any `VoxelTool`, not just `VoxelLodTerrain`.
     - `ZN_FastNoiseLite`: Editor: added support for noise analysis window, formerly present only on `FastNoise2` (This is mainly a debug tool for internal development of graph generators).
     - Editor: range analysis debugging now also shows actual min/max on outputs connected to `SdfPreview` nodes. This is mainly to investigate internal bugs.
 

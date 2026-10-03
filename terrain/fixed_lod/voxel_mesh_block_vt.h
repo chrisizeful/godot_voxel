@@ -26,6 +26,9 @@ public:
 	// add it multiple times
 	bool is_in_update_list = false;
 
+	// Meshing tasks sent for this block whose results haven't come back yet.
+	uint32_t pending_mesh_tasks = 0;
+
 	// Will be true if the block has ever been processed by meshing (regardless of there being a mesh or not).
 	// This is needed to know if the area is loaded, in terms of collisions. If the game uses voxels directly for
 	// collision, it may be a better idea to use `is_area_editable` and not use mesh blocks

@@ -1948,6 +1948,7 @@ void VoxelTerrain::process_meshing() {
 		scheduler.push_main_task(task);
 
 		mesh_block->is_in_update_list = false;
+		++mesh_block->pending_mesh_tasks;
 	}
 
 	scheduler.flush();
@@ -1970,6 +1971,10 @@ void VoxelTerrain::apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob) {
 		// That block is no longer loaded, drop the result
 		++_stats.dropped_block_meshs;
 		return;
+	}
+
+	if (block->pending_mesh_tasks > 0) {
+		--block->pending_mesh_tasks;
 	}
 
 	if (ob.type == VoxelEngine::BlockMeshOutput::TYPE_DROPPED) {
@@ -2157,6 +2162,19 @@ bool VoxelTerrain::is_area_meshed(const Box3i &box_in_voxels) const {
 	return mesh_box.all_cells_match([this](Vector3i bpos) {
 		const VoxelMeshBlockVT *block = _mesh_map.get_block(bpos);
 		return block != nullptr && block->is_loaded;
+	});
+}
+
+bool VoxelTerrain::is_area_mesh_up_to_date(const Box3i &box_in_voxels) const {
+	// Edits schedule updates on neighbor blocks too, so pad the same way.
+	const Box3i mesh_box = box_in_voxels.padded(1).downscaled(get_mesh_block_size());
+	return mesh_box.all_cells_match([this](Vector3i bpos) {
+		const VoxelMeshBlockVT *block = _mesh_map.get_block(bpos);
+		if (block == nullptr) {
+			// Nothing meshes there, so nothing can be stale either.
+			return true;
+		}
+		return block->is_loaded && !block->is_in_update_list && block->pending_mesh_tasks == 0;
 	});
 }
 
@@ -2413,6 +2431,10 @@ bool VoxelTerrain::_b_is_area_meshed(AABB aabb) const {
 	return is_area_meshed(Box3i(aabb.position, aabb.size));
 }
 
+bool VoxelTerrain::_b_is_area_mesh_up_to_date(AABB aabb) const {
+	return is_area_mesh_up_to_date(Box3i(aabb.position, aabb.size));
+}
+
 void VoxelTerrain::_bind_methods() {
 	using Self = VoxelTerrain;
 
@@ -2478,6 +2500,9 @@ void VoxelTerrain::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("has_data_block", "block_position"), &Self::has_data_block);
 	ClassDB::bind_method(D_METHOD("is_area_meshed", "area_in_voxels"), &Self::_b_is_area_meshed);
+	ClassDB::bind_method(
+			D_METHOD("is_area_mesh_up_to_date", "area_in_voxels"), &Self::_b_is_area_mesh_up_to_date
+	);
 
 	ClassDB::bind_method(D_METHOD("debug_set_draw_enabled", "enabled"), &Self::debug_set_draw_enabled);
 	ClassDB::bind_method(D_METHOD("debug_is_draw_enabled"), &Self::debug_is_draw_enabled);

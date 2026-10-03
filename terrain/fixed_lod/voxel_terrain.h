@@ -256,6 +256,7 @@ private:
 	void notify_data_block_enter(const VoxelDataBlock &block, Vector3i bpos, ViewerID viewer_id);
 
 	bool is_area_meshed(const Box3i &box_in_voxels) const;
+	bool is_area_mesh_up_to_date(const Box3i &box_in_voxels) const;
 
 #ifdef TOOLS_ENABLED
 	void process_debug_draw();
@@ -285,6 +286,7 @@ private:
 	void _b_rpc_receive_block(PackedByteArray data);
 	void _b_rpc_receive_area(PackedByteArray data);
 	bool _b_is_area_meshed(AABB aabb) const;
+	bool _b_is_area_mesh_up_to_date(AABB aabb) const;
 
 	VolumeID _volume_id;
 

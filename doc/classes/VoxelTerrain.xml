@@ -79,6 +79,14 @@
 			<description>
 			</description>
 		</method>
+		<method name="is_area_mesh_up_to_date" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="area_in_voxels" type="AABB" />
+			<description>
+				Returns true if meshes and colliders in the area reflect every edit made to it so far. Returns false while an edit's remeshing is still queued or running, or if the area has never been meshed.
+				Useful when something must wait for colliders to catch up with an edit, for example a body spawned where voxels were just removed (see [method VoxelTool.detach_floating_islands]).
+			</description>
+		</method>
 		<method name="is_area_meshed" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="area_in_voxels" type="AABB" />

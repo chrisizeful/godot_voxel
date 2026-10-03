@@ -4,6 +4,7 @@
 #include "../storage/funcs.h"
 #include "../storage/voxel_buffer_gd.h"
 #include "../storage/voxel_format.h"
+#include "../util/godot/core/array.h"
 #include "../util/math/box3i.h"
 #include "../util/math/sdf.h"
 #include "funcs.h"
@@ -79,6 +80,15 @@ public:
 #ifdef VOXEL_ENABLE_MESH_SDF
 	virtual void do_mesh(const VoxelMeshSDF &mesh_sdf, const Transform3D &transform, const float isolevel);
 #endif
+
+	// Removes groups of solid voxels touching `seed_box` that are no longer connected to the rest of the volume, and
+	// returns each as a Dictionary with a padded copy of its voxels. See `find_floating_islands`.
+	Array detach_floating_islands(
+			const Box3i seed_box,
+			const uint32_t max_island_voxels,
+			const uint8_t channels_mask,
+			const int padding
+	);
 
 	void sdf_stamp_erase(Ref<godot::VoxelBuffer> stamp, Vector3i pos);
 	void sdf_stamp_erase(const VoxelBuffer &stamp, Vector3i pos);
@@ -188,6 +198,7 @@ private:
 	Variant _b_get_voxel_metadata(Vector3i pos) const;
 	void _b_set_voxel_metadata(Vector3i pos, Variant meta);
 	bool _b_is_area_editable(AABB box) const;
+	Array _b_detach_floating_islands(AABB seed_box, int max_island_voxels, int channels_mask, int padding);
 	void _b_set_channel(godot::VoxelBuffer::ChannelId p_channel);
 
 	godot::VoxelBuffer::ChannelId _b_get_channel() const;
