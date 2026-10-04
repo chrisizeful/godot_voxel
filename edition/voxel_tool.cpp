@@ -341,7 +341,43 @@ Array VoxelTool::detach_floating_islands(
 		result["center"] = center;
 		results.append(result);
 	}
+
+	if (channel == VoxelBuffer::CHANNEL_SDF) {
+		clear_isolated_zero_sdf(seed_box);
+	}
 	return results;
+}
+
+void VoxelTool::clear_isolated_zero_sdf(const Box3i &box) {
+	ZN_PROFILE_SCOPE();
+	// Padded so each voxel in the box can see all of its neighbors.
+	const Box3i read_box = box.padded(1);
+	if (!is_area_editable(read_box)) {
+		return;
+	}
+	VoxelBuffer voxels(VoxelBuffer::ALLOCATOR_POOL);
+	voxels.create(read_box.size);
+	copy(read_box.position, voxels, 1 << VoxelBuffer::CHANNEL_SDF, false);
+
+	StdVector<Vector3i> isolated;
+	Box3i(Vector3i(1, 1, 1), box.size).for_each_cell_zxy([&](const Vector3i local) {
+		if (voxels.get_voxel_f(local.x, local.y, local.z, VoxelBuffer::CHANNEL_SDF) != 0.f) {
+			return;
+		}
+		const bool touches_solid = !Box3i(local - Vector3i(1, 1, 1), Vector3i(3, 3, 3)).all_cells_match([&](Vector3i n) {
+			return voxels.get_voxel_f(n.x, n.y, n.z, VoxelBuffer::CHANNEL_SDF) >= 0.f;
+		});
+		if (!touches_solid) {
+			isolated.push_back(read_box.position + local);
+		}
+	});
+	if (isolated.empty()) {
+		return;
+	}
+	for (const Vector3i pos : isolated) {
+		_set_voxel_f(pos, ISLAND_SURFACE_CLEARANCE);
+	}
+	_post_edit(box);
 }
 
 void VoxelTool::do_box(Vector3i begin, Vector3i end) {

@@ -90,6 +90,10 @@ public:
 			const int padding
 	);
 
+	// Edits can leave a voxel at exactly 0 SDF with no solid voxel around it. It holds no matter, but Transvoxel still
+	// draws a speck around it, so this nudges such voxels outside. Called by `detach_floating_islands`.
+	void clear_isolated_zero_sdf(const Box3i &box);
+
 	void sdf_stamp_erase(Ref<godot::VoxelBuffer> stamp, Vector3i pos);
 	void sdf_stamp_erase(const VoxelBuffer &stamp, Vector3i pos);
 
