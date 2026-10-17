@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VoxelMesherDualContouring" inherits="VoxelMesher" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Builds smooth voxel meshes that keep sharp edges and corners.
+	</brief_description>
+	<description>
+		Dual contouring mesher for [VoxelTerrain]. It places one vertex per cell where the tangent planes of the surface crossings in that cell meet.
+		Sharp edges and corners need the exact surface normal at each crossing, which a voxel grid doesn't hold: within about a voxel of a feature, any normal estimated from stored SDF values blends the faces meeting there. A generator that knows its shapes (a room carved into terrain, a wall) can write exact normals into the channels named by [member edge_normals_channel], and those features then come out sharp. Elsewhere the mesher uses the SDF's gradient, and features round off much like with [VoxelMesherTransvoxel].
+		Vertex attributes match [VoxelMesherTransvoxel]: [code]CUSTOM0[/code] holds LOD data (always zero, since this mesher has no LOD transitions) and [code]CUSTOM1[/code] holds texture data in the Single layout, so materials written for Transvoxel work unchanged. It does not support [VoxelLodTerrain].
+		It needs 2 voxels of padding on each side of a block.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="edge_normals_channel" type="int" setter="set_edge_normals_channel" getter="get_edge_normals_channel" default="-1">
+			First of 3 consecutive channels, each 32-bit, holding exact surface data for the voxel edges along X, Y and Z. Each edge is stored on its lower voxel: bits 0-7 are where the surface crosses it, as a fraction of the edge from 1 to 255 (0 means no data), and bits 8-19 and 20-31 are the outward normal (toward air) in octahedral encoding, each axis mapped from -1..1 to 0..4095.
+			Stored data is only used while the crossing it describes is still within a quarter of an edge of where the SDF puts it now, so voxels edited after generation fall back to the gradient. -1 disables it.
+		</member>
+		<member name="mass_point_bias" type="float" setter="set_mass_point_bias" getter="get_mass_point_bias" default="0.02">
+			How much each vertex is pulled toward the average of the surface crossings in its cell. Higher values tidy flat areas but soften features.
+		</member>
+		<member name="sharpness" type="float" setter="set_sharpness" getter="get_sharpness" default="0.1">
+			Directions of the error function weaker than this fraction of the strongest are ignored when placing a vertex. Lower values keep more features but can place vertices badly where planes are nearly parallel.
+		</member>
+		<member name="texturing_mode" type="int" setter="set_texturing_mode" getter="get_texturing_mode" enum="VoxelMesherDualContouring.TexturingMode" default="0">
+			How material indices are encoded in vertices. See [enum TexturingMode].
+		</member>
+	</members>
+	<constants>
+		<constant name="TEXTURES_NONE" value="0" enum="TexturingMode">
+			No texture data is produced.
+		</constant>
+		<constant name="TEXTURES_SINGLE_S4" value="2" enum="TexturingMode">
+			Each voxel has one 8-bit material index in [constant VoxelBuffer.CHANNEL_INDICES]; up to 4 blend per cell, encoded like [constant VoxelMesherTransvoxel.TEXTURES_SINGLE_S4].
+		</constant>
+	</constants>
+</class>

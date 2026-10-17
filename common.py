@@ -208,6 +208,7 @@ def get_sources(env, is_editor_build):
 
         sources += [
             "meshers/transvoxel/*.cpp",
+            "meshers/dual_contouring/*.cpp",
             
             "engine/detail_rendering/detail_rendering.cpp",
             "engine/detail_rendering/render_detail_texture_task.cpp",
