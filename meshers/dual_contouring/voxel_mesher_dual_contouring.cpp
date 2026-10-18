@@ -1,4 +1,5 @@
 #include "voxel_mesher_dual_contouring.h"
+#include "../../thirdparty/meshoptimizer/meshoptimizer.h"
 #include "../../storage/voxel_buffer.h"
 #include "../../util/containers/span.h"
 #include "../../util/containers/std_vector.h"
@@ -249,6 +250,93 @@ struct Arrays {
 Arrays &get_tls_arrays() {
 	thread_local Arrays tls_arrays;
 	return tls_arrays;
+}
+
+// Merges triangles wherever that moves the surface less than error_threshold voxels, and shades and textures it about
+// the same. Vertices on the block's border stay put, so neighbouring blocks still meet; so do vertices where the
+// material changes and the ring next to them, so blend bands keep their width.
+void simplify(Arrays &arrays, const bool textured, const float error_threshold) {
+	ZN_PROFILE_SCOPE();
+	const size_t vertex_count = arrays.vertices.size();
+	const size_t index_count = arrays.indices.size();
+
+	thread_local StdVector<unsigned char> lock;
+	lock.assign(vertex_count, 0);
+	if (textured) {
+		auto signature = [&](int v) {
+			uint64_t bits;
+			memcpy(&bits, &arrays.texturing[v * 2], sizeof(bits));
+			return bits;
+		};
+		for (size_t i = 0; i < index_count; i += 3) {
+			const int *t = &arrays.indices[i];
+			if (signature(t[0]) != signature(t[1]) || signature(t[1]) != signature(t[2])) {
+				lock[t[0]] = lock[t[1]] = lock[t[2]] = 1;
+			}
+		}
+		// One more ring, marked 2 so the spread doesn't run on.
+		for (size_t i = 0; i < index_count; i += 3) {
+			const int *t = &arrays.indices[i];
+			if (lock[t[0]] == 1 || lock[t[1]] == 1 || lock[t[2]] == 1) {
+				for (int k = 0; k < 3; ++k) {
+					if (lock[t[k]] == 0) {
+						lock[t[k]] = 2;
+					}
+				}
+			}
+		}
+	}
+
+	thread_local StdVector<unsigned int> kept;
+	kept.resize(index_count);
+	// Normals count as much as positions, so creases and shading survive.
+	const float normal_weights[3] = { 1.f, 1.f, 1.f };
+	const size_t kept_count = zylannmeshopt::meshopt_simplifyWithAttributes(
+			kept.data(),
+			reinterpret_cast<const unsigned int *>(arrays.indices.data()),
+			index_count,
+			&arrays.vertices[0].x,
+			vertex_count,
+			sizeof(Vector3f),
+			&arrays.normals[0].x,
+			sizeof(Vector3f),
+			normal_weights,
+			3,
+			lock.data(),
+			0,
+			error_threshold,
+			zylannmeshopt::meshopt_SimplifyLockBorder | zylannmeshopt::meshopt_SimplifyErrorAbsolute,
+			nullptr
+	);
+	kept.resize(kept_count);
+
+	// Drop the vertices nothing uses any more.
+	thread_local StdVector<unsigned int> remap;
+	remap.resize(vertex_count);
+	const size_t unique_count =
+			zylannmeshopt::meshopt_optimizeVertexFetchRemap(remap.data(), kept.data(), kept.size(), vertex_count);
+	thread_local StdVector<Vector3f> vertices;
+	thread_local StdVector<Vector3f> normals;
+	thread_local StdVector<float> texturing;
+	vertices.resize(unique_count);
+	normals.resize(unique_count);
+	zylannmeshopt::meshopt_remapVertexBuffer(
+			vertices.data(), arrays.vertices.data(), vertex_count, sizeof(Vector3f), remap.data()
+	);
+	zylannmeshopt::meshopt_remapVertexBuffer(normals.data(), arrays.normals.data(), vertex_count, sizeof(Vector3f), remap.data());
+	if (textured) {
+		texturing.resize(unique_count * 2);
+		zylannmeshopt::meshopt_remapVertexBuffer(
+				texturing.data(), arrays.texturing.data(), vertex_count, sizeof(float) * 2, remap.data()
+		);
+		arrays.texturing.swap(texturing);
+	}
+	arrays.vertices.swap(vertices);
+	arrays.normals.swap(normals);
+	arrays.indices.resize(kept_count);
+	zylannmeshopt::meshopt_remapIndexBuffer(
+			reinterpret_cast<unsigned int *>(arrays.indices.data()), kept.data(), kept_count, remap.data()
+	);
 }
 
 } // namespace
@@ -532,6 +620,9 @@ void VoxelMesherDualContouring::build(VoxelMesher::Output &output, const VoxelMe
 	if (arrays.indices.empty()) {
 		return;
 	}
+	if (_mesh_optimization_enabled) {
+		simplify(arrays, textured, _mesh_optimization_error_threshold);
+	}
 
 	PackedVector3Array gd_vertices;
 	PackedVector3Array gd_normals;
@@ -611,6 +702,24 @@ int VoxelMesherDualContouring::get_edge_normals_channel() const {
 	return _edge_normals_channel;
 }
 
+void VoxelMesherDualContouring::set_mesh_optimization_enabled(bool enabled) {
+	_mesh_optimization_enabled = enabled;
+	emit_changed();
+}
+
+bool VoxelMesherDualContouring::is_mesh_optimization_enabled() const {
+	return _mesh_optimization_enabled;
+}
+
+void VoxelMesherDualContouring::set_mesh_optimization_error_threshold(float threshold) {
+	_mesh_optimization_error_threshold = std::clamp(threshold, 0.f, 1.f);
+	emit_changed();
+}
+
+float VoxelMesherDualContouring::get_mesh_optimization_error_threshold() const {
+	return _mesh_optimization_error_threshold;
+}
+
 void VoxelMesherDualContouring::_bind_methods() {
 	using Self = VoxelMesherDualContouring;
 
@@ -622,6 +731,18 @@ void VoxelMesherDualContouring::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_mass_point_bias", "bias"), &Self::set_mass_point_bias);
 	ClassDB::bind_method(D_METHOD("get_mass_point_bias"), &Self::get_mass_point_bias);
+
+	ClassDB::bind_method(
+			D_METHOD("set_mesh_optimization_enabled", "enabled"), &Self::set_mesh_optimization_enabled
+	);
+	ClassDB::bind_method(D_METHOD("is_mesh_optimization_enabled"), &Self::is_mesh_optimization_enabled);
+
+	ClassDB::bind_method(
+			D_METHOD("set_mesh_optimization_error_threshold", "threshold"), &Self::set_mesh_optimization_error_threshold
+	);
+	ClassDB::bind_method(
+			D_METHOD("get_mesh_optimization_error_threshold"), &Self::get_mesh_optimization_error_threshold
+	);
 
 	ClassDB::bind_method(D_METHOD("set_edge_normals_channel", "channel"), &Self::set_edge_normals_channel);
 	ClassDB::bind_method(D_METHOD("get_edge_normals_channel"), &Self::get_edge_normals_channel);
@@ -642,6 +763,16 @@ void VoxelMesherDualContouring::_bind_methods() {
 			"get_mass_point_bias"
 	);
 
+	ADD_PROPERTY(
+			PropertyInfo(Variant::BOOL, "mesh_optimization_enabled"),
+			"set_mesh_optimization_enabled",
+			"is_mesh_optimization_enabled"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "mesh_optimization_error_threshold", PROPERTY_HINT_RANGE, "0.0,1.0,0.001"),
+			"set_mesh_optimization_error_threshold",
+			"get_mesh_optimization_error_threshold"
+	);
 	ADD_PROPERTY(
 			PropertyInfo(Variant::INT, "edge_normals_channel", PROPERTY_HINT_RANGE, "-1,5,1"),
 			"set_edge_normals_channel",

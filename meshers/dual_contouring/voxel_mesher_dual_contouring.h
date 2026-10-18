@@ -39,6 +39,13 @@ public:
 	void set_mass_point_bias(float bias);
 	float get_mass_point_bias() const;
 
+	// Merges triangles wherever that moves the surface less than the threshold, in voxels; see the class documentation.
+	void set_mesh_optimization_enabled(bool enabled);
+	bool is_mesh_optimization_enabled() const;
+
+	void set_mesh_optimization_error_threshold(float threshold);
+	float get_mesh_optimization_error_threshold() const;
+
 	// First of 3 consecutive 32-bit channels holding exact normals for the voxel edges along X, Y and Z, stored on each
 	// edge's lower voxel, or -1 to always use the SDF's gradient. See the class documentation for the layout.
 	void set_edge_normals_channel(int channel);
@@ -55,6 +62,8 @@ private:
 	// Pulls the vertex slightly toward the average of the surface crossings, which keeps flat areas tidy.
 	float _mass_point_bias = 0.02f;
 	int _edge_normals_channel = -1;
+	bool _mesh_optimization_enabled = false;
+	float _mesh_optimization_error_threshold = 0.05f;
 };
 
 } // namespace zylann::voxel

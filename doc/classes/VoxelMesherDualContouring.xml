@@ -19,6 +19,12 @@
 		<member name="mass_point_bias" type="float" setter="set_mass_point_bias" getter="get_mass_point_bias" default="0.02">
 			How much each vertex is pulled toward the average of the surface crossings in its cell. Higher values tidy flat areas but soften features.
 		</member>
+		<member name="mesh_optimization_enabled" type="bool" setter="set_mesh_optimization_enabled" getter="is_mesh_optimization_enabled" default="false">
+			If true, each block's mesh is simplified after it's built: triangles are merged wherever that moves the surface less than [member mesh_optimization_error_threshold] and keeps its normals about the same, so flat ground costs far fewer triangles while edges and corners stay. Vertices on the block's border never move, so neighbouring blocks still meet, and neither do vertices where the material changes or the ring next to them, so texture blends keep their width. Collision built from the mesh is simplified too.
+		</member>
+		<member name="mesh_optimization_error_threshold" type="float" setter="set_mesh_optimization_error_threshold" getter="get_mesh_optimization_error_threshold" default="0.05">
+			How far, in voxels, simplification may move the surface (and, weighted the same, its normals).
+		</member>
 		<member name="sharpness" type="float" setter="set_sharpness" getter="get_sharpness" default="0.1">
 			Directions of the error function weaker than this fraction of the strongest are ignored when placing a vertex. Lower values keep more features but can place vertices badly where planes are nearly parallel.
 		</member>
