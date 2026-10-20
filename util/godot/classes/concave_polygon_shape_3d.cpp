@@ -7,6 +7,48 @@
 
 namespace zylann::godot {
 
+namespace {
+
+// Jolt's own test (IndexedTriangle::IsDegenerate): the triangle spans no area.
+inline bool is_degenerate_triangle(const Vector3 &a, const Vector3 &b, const Vector3 &c) {
+	return (b - a).cross(c - a).length_squared() < 1e-12f;
+}
+
+// Drops degenerate triangles from a deindexed face list, in place. A mesher can emit them (a collapsed quad, a crossing
+// at a cell corner); Jolt refuses a mesh with nothing else in it, so they go before the shape is made.
+void remove_degenerate_faces(PackedVector3Array &face_points) {
+	Vector3 *w = face_points.ptrw();
+	const int count = face_points.size();
+	int kept = 0;
+	for (int i = 0; i + 2 < count; i += 3) {
+		if (is_degenerate_triangle(w[i], w[i + 1], w[i + 2])) {
+			continue;
+		}
+		if (kept != i) {
+			w[kept] = w[i];
+			w[kept + 1] = w[i + 1];
+			w[kept + 2] = w[i + 2];
+		}
+		kept += 3;
+	}
+	face_points.resize(kept);
+}
+
+// The shape for a deindexed face list, or null when no real triangle is left.
+Ref<ConcavePolygonShape3D> make_shape(PackedVector3Array face_points) {
+	remove_degenerate_faces(face_points);
+	Ref<ConcavePolygonShape3D> shape;
+	if (face_points.size() < 3) {
+		return shape;
+	}
+	ZN_PROFILE_SCOPE_NAMED("Godot shape");
+	shape.instantiate();
+	shape->set_faces(face_points);
+	return shape;
+}
+
+} // namespace
+
 Ref<ConcavePolygonShape3D> create_concave_polygon_shape(const Span<const Array> surfaces) {
 	// Faster version of Mesh::create_trimesh_shape(), because `create_trimesh_shape` creates a Trimesh internally along
 	// the way, which is super slow
@@ -72,13 +114,7 @@ Ref<ConcavePolygonShape3D> create_concave_polygon_shape(const Span<const Array> 
 		face_points_offset += indices.size();
 	}
 
-	Ref<ConcavePolygonShape3D> shape;
-	{
-		ZN_PROFILE_SCOPE_NAMED("Godot shape");
-		shape.instantiate();
-		shape->set_faces(face_points);
-	}
-	return shape;
+	return make_shape(face_points);
 }
 
 PackedVector3Array deindex_mesh_to_packed_vector3_array(
@@ -135,13 +171,7 @@ Ref<ConcavePolygonShape3D> create_concave_polygon_shape(
 
 	const PackedVector3Array face_points = deindex_mesh_to_packed_vector3_array(positions, indices);
 
-	Ref<ConcavePolygonShape3D> shape;
-	{
-		ZN_PROFILE_SCOPE_NAMED("Godot shape");
-		shape.instantiate();
-		shape->set_faces(face_points);
-	}
-	return shape;
+	return make_shape(face_points);
 }
 
 // This variant may use a lower index count so a subset of the mesh is used to create the collision shape.
@@ -179,12 +209,7 @@ Ref<ConcavePolygonShape3D> create_concave_polygon_shape(
 			to_span(indices).sub(0, index_count)
 	);
 
-	{
-		ZN_PROFILE_SCOPE_NAMED("Godot shape");
-		shape.instantiate();
-		shape->set_faces(face_points);
-	}
-	return shape;
+	return make_shape(face_points);
 }
 
 } // namespace zylann::godot
