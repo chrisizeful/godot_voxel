@@ -1,6 +1,7 @@
 #ifndef VOXEL_EDITION_FUNCS_H
 #define VOXEL_EDITION_FUNCS_H
 
+#include <cfloat>
 #include "../storage/funcs.h"
 #include "../storage/mixel4.h"
 #include "../storage/voxel_data_grid.h"
@@ -335,6 +336,45 @@ struct SdfSphere {
 
 	inline Box3i get_box() {
 		return get_sdf_sphere_box(center, radius);
+	}
+};
+
+// The union of several spheres: one pass over the voxels for a lumpy shape (a bite's core and lobes).
+struct SdfSpheres {
+	StdVector<Vector3f> centers;
+	StdVector<float> radii;
+	float sdf_scale;
+
+	inline float operator()(Vector3f pos) const {
+		float d = FLT_MAX;
+		for (unsigned int i = 0; i < centers.size(); ++i) {
+			d = math::min(d, math::sdf_sphere(pos, centers[i], radii[i]));
+		}
+		return sdf_scale * d;
+	}
+
+	inline bool is_inside(Vector3f pos) const {
+		for (unsigned int i = 0; i < centers.size(); ++i) {
+			if (math::distance_squared(centers[i], pos) < radii[i] * radii[i]) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	inline const char *name() const {
+		return "SdfSpheres";
+	}
+
+	inline Box3i get_box() {
+		if (centers.empty()) {
+			return Box3i();
+		}
+		Box3i box = get_sdf_sphere_box(centers[0], radii[0]);
+		for (unsigned int i = 1; i < centers.size(); ++i) {
+			box.merge_with(get_sdf_sphere_box(centers[i], radii[i]));
+		}
+		return box;
 	}
 };
 

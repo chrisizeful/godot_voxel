@@ -762,6 +762,14 @@ void VoxelTool::_b_do_point(Vector3i pos) {
 	do_point(pos);
 }
 
+void VoxelTool::do_spheres(const PackedVector3Array &centers, const PackedFloat32Array &radii) {
+	ERR_PRINT("Not implemented");
+}
+
+void VoxelTool::_b_do_spheres(PackedVector3Array centers, PackedFloat32Array radii) {
+	do_spheres(centers, radii);
+}
+
 void VoxelTool::_b_do_sphere(Vector3 pos, float radius) {
 	do_sphere(pos, radius);
 }
@@ -906,6 +914,7 @@ void VoxelTool::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_voxel_f", "pos", "v"), &VoxelTool::_b_set_voxel_f);
 	ClassDB::bind_method(D_METHOD("do_point", "pos"), &VoxelTool::_b_do_point);
 	ClassDB::bind_method(D_METHOD("do_sphere", "center", "radius"), &VoxelTool::_b_do_sphere);
+	ClassDB::bind_method(D_METHOD("do_spheres", "centers", "radii"), &VoxelTool::_b_do_spheres);
 	ClassDB::bind_method(D_METHOD("do_box", "begin", "end"), &VoxelTool::_b_do_box);
 	ClassDB::bind_method(D_METHOD("do_path", "points", "radii"), &VoxelTool::_b_do_path);
 #ifdef VOXEL_ENABLE_MESH_SDF

@@ -75,6 +75,8 @@ public:
 	virtual void set_voxel_f(Vector3i pos, float v);
 	virtual void do_point(Vector3i pos);
 	virtual void do_sphere(Vector3 p_center, float radius);
+	// The union of several spheres in one pass (a lumpy bite), instead of one do_sphere per lobe.
+	virtual void do_spheres(const PackedVector3Array &centers, const PackedFloat32Array &radii);
 	virtual void do_box(Vector3i begin, Vector3i end);
 	virtual void do_path(Span<const Vector3> positions, Span<const float> radii);
 #ifdef VOXEL_ENABLE_MESH_SDF
@@ -185,6 +187,7 @@ private:
 	Ref<VoxelRaycastResult> _b_raycast(Vector3 pos, Vector3 dir, float max_distance, uint32_t collision_mask);
 	void _b_do_point(Vector3i pos);
 	void _b_do_sphere(Vector3 pos, float radius);
+	void _b_do_spheres(PackedVector3Array centers, PackedFloat32Array radii);
 	void _b_do_box(Vector3i begin, Vector3i end);
 	void _b_do_path(PackedVector3Array positions, PackedFloat32Array radii);
 #ifdef VOXEL_ENABLE_MESH_SDF

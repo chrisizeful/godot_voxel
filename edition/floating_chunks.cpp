@@ -1,4 +1,5 @@
 #include "floating_chunks.h"
+#include <cmath>
 #include "../constants/voxel_string_names.h"
 #include "../storage/voxel_buffer.h"
 #include "../util/godot/classes/array_mesh.h"
@@ -577,27 +578,38 @@ StdVector<StdVector<Vector3i>> find_floating_islands(
 		Vector3i(0, 0, -1), Vector3i(0, 0, 1), Vector3i(0, -1, 0),
 	};
 
-	IslandSampler sampler(voxel_tool);
-	StdUnorderedSet<Vector3i> anchored;
-	StdUnorderedSet<Vector3i> claimed;
-	StdVector<StdVector<Vector3i>> islands;
+	// Everything is kept in dense grids over a box round the seeds, big enough for an island of max_island_voxels
+	// whichever way it reaches; a fill that leaves the box is anchored (that island would be too big to detach).
+	const int reach = static_cast<int>(std::cbrt(static_cast<double>(max_island_voxels))) * 2 + 2;
+	const Box3i work_box = seed_box.padded(reach);
+	const uint64_t volume = Vector3iUtil::get_volume_u64(work_box.size);
+	enum State : uint8_t { STATE_FREE = 0, STATE_ANCHORED = 1, STATE_CLAIMED = 2 };
+	thread_local StdVector<uint8_t> states;
+	thread_local StdVector<uint32_t> visit_marks;
+	states.assign(volume, STATE_FREE);
+	visit_marks.assign(volume, 0);
+	uint32_t visit_mark = 0;
+	auto index_of = [&](const Vector3i pos) -> uint64_t {
+		return Vector3iUtil::get_zxy_index(pos - work_box.position, work_box.size);
+	};
 
-	StdUnorderedSet<Vector3i> visited;
+	IslandSampler sampler(voxel_tool);
+	StdVector<StdVector<Vector3i>> islands;
 	StdVector<Vector3i> stack;
 	StdVector<Vector3i> island;
 
 	seed_box.for_each_cell_zxy([&](const Vector3i seed) {
-		if (anchored.count(seed) != 0 || claimed.count(seed) != 0) {
+		if (states[index_of(seed)] != STATE_FREE) {
 			return;
 		}
 		if (sampler.sample(seed) != IslandSampler::SOLID) {
 			return;
 		}
 
-		visited.clear();
+		++visit_mark;
 		stack.clear();
 		island.clear();
-		visited.insert(seed);
+		visit_marks[index_of(seed)] = visit_mark;
 		stack.push_back(seed);
 		island.push_back(seed);
 		bool is_anchored = false;
@@ -608,10 +620,15 @@ StdVector<StdVector<Vector3i>> find_floating_islands(
 
 			for (const Vector3i offset : neighbors) {
 				const Vector3i npos = pos + offset;
-				if (visited.count(npos) != 0) {
+				if (!work_box.contains(npos)) {
+					is_anchored = true;
+					break;
+				}
+				const uint64_t ni = index_of(npos);
+				if (visit_marks[ni] == visit_mark) {
 					continue;
 				}
-				if (anchored.count(npos) != 0) {
+				if (states[ni] == STATE_ANCHORED) {
 					is_anchored = true;
 					break;
 				}
@@ -625,17 +642,18 @@ StdVector<StdVector<Vector3i>> find_floating_islands(
 						is_anchored = true;
 						break;
 					}
-					visited.insert(npos);
+					visit_marks[ni] = visit_mark;
 					stack.push_back(npos);
 					island.push_back(npos);
 				}
 			}
 		}
 
-		if (is_anchored) {
-			anchored.insert(island.begin(), island.end());
-		} else {
-			claimed.insert(island.begin(), island.end());
+		const uint8_t state = is_anchored ? STATE_ANCHORED : STATE_CLAIMED;
+		for (const Vector3i pos : island) {
+			states[index_of(pos)] = state;
+		}
+		if (!is_anchored) {
 			islands.push_back(island);
 		}
 	});

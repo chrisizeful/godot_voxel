@@ -108,6 +108,14 @@
 				You may choose which operation to do before calling this function, by setting [member mode]. With blocky voxels, you may also set [member value] to choose which voxel ID to use.
 			</description>
 		</method>
+		<method name="do_spheres">
+			<return type="void" />
+			<param index="0" name="centers" type="PackedVector3Array" />
+			<param index="1" name="radii" type="PackedFloat32Array" />
+			<description>
+				Operate on voxels within the union of several spheres, in one pass over the voxels (each sphere's center is paired with the radius at the same index). Same as calling [method do_sphere] once per sphere, but every voxel is visited once and the edit is applied as one.
+			</description>
+		</method>
 		<method name="get_voxel">
 			<return type="int" />
 			<param index="0" name="pos" type="Vector3i" />

@@ -145,6 +145,9 @@
 		</member>
 		<member name="collision_margin" type="float" setter="set_collision_margin" getter="get_collision_margin" default="0.04">
 		</member>
+		<member name="collision_update_delay" type="int" setter="set_collision_update_delay" getter="get_collision_update_delay" default="0">
+			How long to wait before updating a block's collider after an edit, in milliseconds; edits within that time rebuild it once, from the latest mesh. Collider generation is expensive, so the intent is to smooth it out.
+		</member>
 		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
 		</member>
 		<member name="debug_draw_enabled" type="bool" setter="debug_set_draw_enabled" getter="debug_is_draw_enabled" default="false">

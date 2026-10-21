@@ -16,6 +16,7 @@
 #include "../../util/godot/classes/base_material_3d.h" // For property hint in release mode in GDExtension...
 #include "../../util/godot/classes/concave_polygon_shape_3d.h"
 #include "../../util/godot/classes/engine.h"
+#include "../../util/godot/classes/time.h"
 #include "../../util/godot/classes/mesh_instance_3d.h"
 #include "../../util/godot/classes/multiplayer_api.h"
 #include "../../util/godot/classes/multiplayer_peer.h"
@@ -358,6 +359,17 @@ float VoxelTerrain::get_collision_margin() const {
 	return _collision_margin;
 }
 
+// Main-thread time per frame for the colliders put off by collision_update_delay (at least one is built).
+static const uint32_t DEFERRED_COLLISION_BUDGET_MSEC = 2;
+
+void VoxelTerrain::set_collision_update_delay(int delay_msec) {
+	_collision_update_delay = math::clamp(delay_msec, 0, 4000);
+}
+
+int VoxelTerrain::get_collision_update_delay() const {
+	return _collision_update_delay;
+}
+
 int VoxelTerrain::get_max_view_distance() const {
 	return _max_view_distance_voxels;
 }
@@ -672,6 +684,10 @@ Dictionary VoxelTerrain::_b_get_statistics() const {
 	d["time_request_blocks_to_load"] = _stats.time_request_blocks_to_load;
 	d["time_process_load_responses"] = _stats.time_process_load_responses;
 	d["time_request_blocks_to_update"] = _stats.time_request_blocks_to_update;
+	d["applied_mesh_blocks"] = _stats.applied_mesh_blocks;
+	d["time_apply_mesh_updates"] = _stats.time_apply_mesh_updates;
+	d["collision_builds"] = _stats.collision_builds;
+	d["time_collision_builds"] = _stats.time_collision_builds;
 
 	d["dropped_block_loads"] = _stats.dropped_block_loads;
 	d["dropped_block_meshs"] = _stats.dropped_block_meshs;
@@ -1219,6 +1235,15 @@ void VoxelTerrain::notify_data_block_enter(const VoxelDataBlock &block, Vector3i
 
 void VoxelTerrain::process() {
 	ZN_PROFILE_SCOPE();
+	// Mesh updates are applied by the engine's main-thread tasks between two of these: publish the frame just done.
+	_stats.applied_mesh_blocks = _stats.applied_mesh_blocks_acc;
+	_stats.time_apply_mesh_updates = _stats.time_apply_mesh_updates_acc;
+	_stats.collision_builds = _stats.collision_builds_acc;
+	_stats.time_collision_builds = _stats.time_collision_builds_acc;
+	_stats.applied_mesh_blocks_acc = 0;
+	_stats.time_apply_mesh_updates_acc = 0;
+	_stats.collision_builds_acc = 0;
+	_stats.time_collision_builds_acc = 0;
 
 #ifdef VOXEL_ENABLE_GPU
 	if (get_generator_use_gpu()) {
@@ -1255,6 +1280,9 @@ void VoxelTerrain::process() {
 	process_viewers();
 	// process_received_data_blocks();
 	process_meshing();
+	if (_collision_update_delay > 0) {
+		process_deferred_collision_updates(DEFERRED_COLLISION_BUDGET_MSEC);
+	}
 
 #ifdef TOOLS_ENABLED
 	if (debug_is_draw_enabled() && is_visible_in_tree()) {
@@ -1963,6 +1991,8 @@ void VoxelTerrain::process_meshing() {
 
 void VoxelTerrain::apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob) {
 	ZN_PROFILE_SCOPE();
+	ProfilingClock apply_clock;
+	++_stats.applied_mesh_blocks_acc;
 	// print_line(String("DDD receive {0}").format(varray(ob.position.to_vec3())));
 
 	VoxelMeshBlockVT *block = _mesh_map.get_block(ob.position);
@@ -2071,24 +2101,21 @@ void VoxelTerrain::apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob) {
 
 	const bool gen_collisions = _generate_collisions && block->collision_viewers.get() > 0;
 	if (gen_collisions) {
-		Ref<Shape3D> collision_shape = make_collision_shape_from_mesher_output(ob.surfaces, **_mesher);
+		// A block's first collider is built at once so freshly streamed ground is solid when its mesh appears; only
+		// rebuilds (edits) are put off, else a level's load would trickle colliders out at the frame budget.
+		if (_collision_update_delay == 0 || !block->has_collision_shape()) {
+			Ref<Shape3D> collision_shape = make_collision_shape_from_mesher_output(ob.surfaces, **_mesher);
+			set_block_collision_shape(*block, collision_shape, Time::get_singleton()->get_ticks_msec());
 
-		bool debug_collisions = false;
-		if (is_inside_tree()) {
-			const SceneTree *scene_tree = get_tree();
-#if DEBUG_ENABLED
-			if (collision_shape.is_valid()) {
-				const Color debug_color = zylann::godot::get_shape_3d_default_color(*scene_tree);
-				zylann::godot::set_shape_3d_debug_color(**collision_shape, debug_color);
+		} else {
+			// Built by process_deferred_collision_updates, within its frame budget, once the delay since the block's
+			// last build has passed, from the latest mesh by then.
+			if (block->deferred_collider_data == nullptr) {
+				_deferred_collision_updates.push_back(ob.position);
+				block->deferred_collider_data = make_unique_instance<VoxelMesher::Output>();
 			}
-#endif
-			debug_collisions = scene_tree->is_debugging_collisions_hint();
+			*block->deferred_collider_data = ob.surfaces;
 		}
-
-		block->set_collision_shape(collision_shape, debug_collisions, this, _collision_margin);
-
-		block->set_collision_layer(_collision_layer);
-		block->set_collision_mask(_collision_mask);
 	}
 
 	block->set_visible(block->mesh_viewers.get() > 0);
@@ -2102,6 +2129,67 @@ void VoxelTerrain::apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob) {
 	if (block->is_loaded == false) {
 		block->is_loaded = true;
 		emit_mesh_block_entered(ob.position);
+	}
+	_stats.time_apply_mesh_updates_acc += apply_clock.get_elapsed_microseconds();
+}
+
+void VoxelTerrain::set_block_collision_shape(VoxelMeshBlockVT &block, Ref<Shape3D> collision_shape, const uint64_t now) {
+	ProfilingClock collision_clock;
+	++_stats.collision_builds_acc;
+	bool debug_collisions = false;
+	if (is_inside_tree()) {
+		const SceneTree *scene_tree = get_tree();
+#if DEBUG_ENABLED
+		if (collision_shape.is_valid()) {
+			const Color debug_color = zylann::godot::get_shape_3d_default_color(*scene_tree);
+			zylann::godot::set_shape_3d_debug_color(**collision_shape, debug_color);
+		}
+#endif
+		debug_collisions = scene_tree->is_debugging_collisions_hint();
+	}
+
+	block.set_collision_shape(collision_shape, debug_collisions, this, _collision_margin);
+	block.set_collision_layer(_collision_layer);
+	block.set_collision_mask(_collision_mask);
+	block.last_collider_update_time = now;
+	block.deferred_collider_data = nullptr;
+	_stats.time_collision_builds_acc += collision_clock.get_elapsed_microseconds();
+}
+
+// Rebuilds the colliders put off by `collision_update_delay` whose delay has passed: at least one per call, then as
+// many as fit in `timeout_msec`.
+void VoxelTerrain::process_deferred_collision_updates(uint32_t timeout_msec) {
+	ZN_PROFILE_SCOPE();
+	const uint64_t then = Time::get_singleton()->get_ticks_msec();
+
+	for (unsigned int i = 0; i < _deferred_collision_updates.size(); ++i) {
+		const Vector3i block_pos = _deferred_collision_updates[i];
+		VoxelMeshBlockVT *block = _mesh_map.get_block(block_pos);
+
+		if (block == nullptr || block->deferred_collider_data == nullptr) {
+			// Block was unloaded or no longer needs a collision update
+			unordered_remove(_deferred_collision_updates, i);
+			--i;
+			continue;
+		}
+
+		const uint64_t now = Time::get_singleton()->get_ticks_msec();
+
+		if (static_cast<int>(now - block->last_collider_update_time) > _collision_update_delay) {
+			Ref<Shape3D> collision_shape;
+			if (_mesher.is_valid()) {
+				collision_shape = make_collision_shape_from_mesher_output(*block->deferred_collider_data, **_mesher);
+			}
+			set_block_collision_shape(*block, collision_shape, now);
+			block->set_collision_enabled(_generate_collisions && block->collision_viewers.get() > 0);
+
+			unordered_remove(_deferred_collision_updates, i);
+			--i;
+		}
+
+		if (Time::get_singleton()->get_ticks_msec() - then >= timeout_msec) {
+			return;
+		}
 	}
 }
 
@@ -2414,6 +2502,10 @@ PackedInt32Array VoxelTerrain::_b_get_viewer_network_peer_ids_in_area(Vector3i a
 	get_viewers_in_area(viewer_ids, Box3i(area_origin, area_size));
 
 	PackedInt32Array peer_ids;
+	if (viewer_ids.empty()) {
+		// ptrw() of an empty packed array is null, which is not an error here: nobody sees the area.
+		return peer_ids;
+	}
 	peer_ids.resize(viewer_ids.size());
 	// Using direct access because when compiling with GodotCpp the array access syntax is different, also it is a bit
 	// faster
@@ -2465,6 +2557,9 @@ void VoxelTerrain::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_collision_margin"), &Self::get_collision_margin);
 	ClassDB::bind_method(D_METHOD("set_collision_margin", "margin"), &Self::set_collision_margin);
+
+	ClassDB::bind_method(D_METHOD("get_collision_update_delay"), &Self::get_collision_update_delay);
+	ClassDB::bind_method(D_METHOD("set_collision_update_delay", "delay_msec"), &Self::set_collision_update_delay);
 
 	ClassDB::bind_method(D_METHOD("voxel_to_data_block", "voxel_pos"), &Self::_b_voxel_to_data_block);
 	ClassDB::bind_method(D_METHOD("data_block_to_voxel", "block_pos"), &Self::_b_data_block_to_voxel);
@@ -2540,6 +2635,11 @@ void VoxelTerrain::_bind_methods() {
 			"get_collision_mask"
 	);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_margin"), "set_collision_margin", "get_collision_margin");
+	ADD_PROPERTY(
+			PropertyInfo(Variant::INT, "collision_update_delay", PROPERTY_HINT_RANGE, "0,4000,1,suffix:ms"),
+			"set_collision_update_delay",
+			"get_collision_update_delay"
+	);
 
 	ADD_GROUP("Materials", "");
 

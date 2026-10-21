@@ -1,7 +1,9 @@
 #ifndef VOXEL_MESH_BLOCK_VT_H
 #define VOXEL_MESH_BLOCK_VT_H
 
+#include "../../meshers/voxel_mesher.h"
 #include "../../util/godot/classes/material.h"
+#include "../../util/memory/memory.h"
 #include "../voxel_mesh_block.h"
 
 namespace zylann::voxel {
@@ -28,6 +30,11 @@ public:
 
 	// Meshing tasks sent for this block whose results haven't come back yet.
 	uint32_t pending_mesh_tasks = 0;
+
+	// When the collider was last rebuilt, and the mesher output of a rebuild put off by `collision_update_delay`
+	// (the latest one; earlier ones are superseded).
+	uint64_t last_collider_update_time = 0;
+	UniquePtr<VoxelMesher::Output> deferred_collider_data;
 
 	// Will be true if the block has ever been processed by meshing (regardless of there being a mesh or not).
 	// This is needed to know if the area is loaded, in terms of collisions. If the game uses voxels directly for

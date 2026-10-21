@@ -183,6 +183,48 @@ void VoxelToolTerrain::do_sphere(Vector3 center, float radius) {
 	_post_edit(op.box);
 }
 
+void VoxelToolTerrain::do_spheres(const PackedVector3Array &centers, const PackedFloat32Array &radii) {
+	ZN_PROFILE_SCOPE();
+	ERR_FAIL_COND(_terrain == nullptr);
+	ERR_FAIL_COND(centers.size() != radii.size());
+	if (centers.size() == 0) {
+		return;
+	}
+
+	ops::DoShapeChunked<ops::SdfSpheres, ops::VoxelDataGridAccess> op;
+	op.shape.centers.reserve(centers.size());
+	op.shape.radii.reserve(radii.size());
+	for (int i = 0; i < centers.size(); ++i) {
+		op.shape.centers.push_back(to_vec3f(centers[i]));
+		op.shape.radii.push_back(radii[i]);
+	}
+	op.shape.sdf_scale = get_sdf_scale();
+	op.box = op.shape.get_box().clipped(_terrain->get_bounds());
+	op.mode = ops::Mode(get_mode());
+	op.texture_params = _texture_params;
+	op.blocky_value = _value;
+	op.channel = get_channel();
+	op.strength = get_sdf_strength();
+
+	if (!is_area_editable(op.box)) {
+		ZN_PRINT_WARNING("Area not editable");
+		return;
+	}
+
+	VoxelData &data = _terrain->get_storage();
+
+	VoxelDataGrid grid;
+	data.get_blocks_grid(grid, op.box, 0);
+	op.block_access.grid = &grid;
+
+	{
+		VoxelDataGrid::LockWrite wlock(grid);
+		op();
+	}
+
+	_post_edit(op.box);
+}
+
 void VoxelToolTerrain::do_hemisphere(Vector3 center, float radius, Vector3 flat_direction, float smoothness) {
 	ZN_PROFILE_SCOPE();
 	ERR_FAIL_COND(_terrain == nullptr);

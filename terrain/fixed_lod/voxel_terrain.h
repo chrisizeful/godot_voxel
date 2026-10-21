@@ -84,6 +84,9 @@ public:
 	void set_collision_margin(float margin);
 	float get_collision_margin() const;
 
+	void set_collision_update_delay(int delay_msec);
+	int get_collision_update_delay() const;
+
 	int get_max_view_distance() const;
 	void set_max_view_distance(int distance_in_voxels);
 
@@ -138,6 +141,17 @@ public:
 		uint32_t time_request_blocks_to_load = 0;
 		uint32_t time_process_load_responses = 0;
 		uint32_t time_request_blocks_to_update = 0;
+		// Per frame: mesh updates applied on the main thread (the engine's time-spread tasks), the time they took,
+		// and the collider builds among them (immediate and deferred).
+		int applied_mesh_blocks = 0;
+		uint32_t time_apply_mesh_updates = 0;
+		int collision_builds = 0;
+		uint32_t time_collision_builds = 0;
+		// Accumulated as updates land; published to the fields above (the last whole frame) at process().
+		int applied_mesh_blocks_acc = 0;
+		uint32_t time_apply_mesh_updates_acc = 0;
+		int collision_builds_acc = 0;
+		uint32_t time_collision_builds_acc = 0;
 	};
 
 	const Stats &get_stats() const;
@@ -213,6 +227,8 @@ private:
 	);
 	// void process_received_data_blocks();
 	void process_meshing();
+	void process_deferred_collision_updates(uint32_t timeout_msec);
+	void set_block_collision_shape(VoxelMeshBlockVT &block, Ref<Shape3D> collision_shape, const uint64_t now);
 	void apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob);
 	void apply_data_block_response(VoxelEngine::BlockDataOutput &ob);
 
@@ -356,6 +372,9 @@ private:
 	std::shared_ptr<MeshingDependency> _meshing_dependency;
 
 	bool _generate_collisions = true;
+	// Milliseconds a block's collider rebuild waits after its last one; edits within that time rebuild it once.
+	int _collision_update_delay = 0;
+	StdVector<Vector3i> _deferred_collision_updates;
 	unsigned int _collision_layer = 1;
 	unsigned int _collision_mask = 1;
 	float _collision_margin = constants::DEFAULT_COLLISION_MARGIN;
