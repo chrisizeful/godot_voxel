@@ -189,6 +189,21 @@ public:
 #endif
 	void get_meshed_block_positions(StdVector<Vector3i> &out_positions) const;
 	Array get_mesh_block_surface(Vector3i block_pos) const;
+	const VoxelMeshMap<VoxelMeshBlockVT> &get_mesh_map() const {
+		return _mesh_map;
+	}
+
+	// A mesh block whose geometry changed, and the voxels that changed it: the edited box when edits caused it, else the
+	// whole block (streamed in or out, remeshed for another reason).
+	struct MeshChange {
+		Vector3i block_position;
+		Box3i voxel_box;
+	};
+
+	// While on, every mesh block whose geometry changes (meshed, emptied, unloaded) is recorded, for
+	// consume_mesh_changes() to hand over (VoxelTerrainNavigation rebakes from them).
+	void set_mesh_change_recording(bool enabled);
+	void consume_mesh_changes(StdVector<MeshChange> &out_changes);
 
 	VolumeID get_volume_id() const override {
 		return _volume_id;
@@ -326,6 +341,9 @@ private:
 
 	// Voxel storage. Using a shared_ptr so threaded tasks can use it safely.
 	std::shared_ptr<VoxelData> _data;
+
+	bool _record_mesh_changes = false;
+	StdVector<MeshChange> _mesh_changes;
 
 	// Mesh storage
 	VoxelMeshMap<VoxelMeshBlockVT> _mesh_map;

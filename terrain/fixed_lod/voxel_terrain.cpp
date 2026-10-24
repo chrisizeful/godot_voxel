@@ -532,6 +532,10 @@ void VoxelTerrain::unload_mesh_block(Vector3i bpos) {
 	if (was_loaded) {
 		emit_mesh_block_exited(bpos);
 	}
+	if (_record_mesh_changes) {
+		const int block_size = get_mesh_block_size();
+		_mesh_changes.push_back({ bpos, Box3i(bpos * block_size, Vector3i(block_size, block_size, block_size)) });
+	}
 }
 
 void VoxelTerrain::save_all_modified_blocks(bool with_copy, std::shared_ptr<AsyncDependencyTracker> tracker) {
@@ -805,7 +809,27 @@ void VoxelTerrain::clear_mesh_map() {
 		});
 	}
 
+	if (_record_mesh_changes) {
+		const int block_size = get_mesh_block_size();
+		_mesh_map.for_each_block([this, block_size](VoxelMeshBlockVT &block) { //
+			_mesh_changes.push_back(
+					{ block.position, Box3i(block.position * block_size, Vector3i(block_size, block_size, block_size)) }
+			);
+		});
+	}
 	_mesh_map.clear();
+}
+
+void VoxelTerrain::set_mesh_change_recording(bool enabled) {
+	_record_mesh_changes = enabled;
+	if (!enabled) {
+		_mesh_changes.clear();
+	}
+}
+
+void VoxelTerrain::consume_mesh_changes(StdVector<MeshChange> &out_changes) {
+	out_changes.swap(_mesh_changes);
+	_mesh_changes.clear();
 }
 
 void VoxelTerrain::reset_map() {
@@ -872,6 +896,26 @@ void VoxelTerrain::post_edit_area(Box3i box_in_voxels, bool update_mesh) {
 	}
 
 	if (update_mesh) {
+		if (_record_mesh_changes) {
+			// Meshes read a little past their block, so an edit can change the blocks beside it too.
+			const Box3i reach = box_in_voxels.padded(2);
+			const int block_size = get_mesh_block_size();
+			reach.downscaled(block_size).for_each_cell([this, &reach, block_size](Vector3i bpos) {
+				VoxelMeshBlockVT *block = _mesh_map.get_block(bpos);
+				if (block == nullptr) {
+					return;
+				}
+				const Box3i part =
+						reach.clipped(Box3i(bpos * block_size, Vector3i(block_size, block_size, block_size)));
+				block->recorded_edit_box = block->recorded_edit_box.is_empty()
+						? part
+						: Box3i::from_min_max(
+								  math::min(block->recorded_edit_box.position, part.position),
+								  math::max(block->recorded_edit_box.position + block->recorded_edit_box.size,
+										  part.position + part.size)
+						  );
+			});
+		}
 		try_schedule_mesh_update_from_data(box_in_voxels);
 
 #ifdef VOXEL_ENABLE_INSTANCER
@@ -2050,6 +2094,25 @@ void VoxelTerrain::apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob) {
 			Ref<Material> material = _mesher->get_material_by_index(material_index);
 			mesh->surface_set_material(surface_index, material);
 		}
+	}
+
+	block->geometry_cache.surfaces.resize(ob.surfaces.surfaces.size());
+	for (unsigned int surface_index = 0; surface_index < ob.surfaces.surfaces.size(); ++surface_index) {
+		const Array &arrays = ob.surfaces.surfaces[surface_index].arrays;
+		VoxelMeshGeometryCache::Surface &cached = block->geometry_cache.surfaces[surface_index];
+		if (arrays.size() > Mesh::ARRAY_INDEX) {
+			cached.vertices = arrays[Mesh::ARRAY_VERTEX];
+			cached.indices = arrays[Mesh::ARRAY_INDEX];
+		} else {
+			cached.vertices = PackedVector3Array();
+			cached.indices = PackedInt32Array();
+		}
+	}
+	if (_record_mesh_changes) {
+		const int block_size = get_mesh_block_size();
+		const Box3i whole(ob.position * block_size, Vector3i(block_size, block_size, block_size));
+		_mesh_changes.push_back({ ob.position, block->recorded_edit_box.is_empty() ? whole : block->recorded_edit_box });
+		block->recorded_edit_box = Box3i();
 	}
 
 	if (mesh.is_null() && block->has_mesh()) {

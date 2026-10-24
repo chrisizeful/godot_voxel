@@ -17,6 +17,17 @@ ZN_GODOT_FORWARD_DECLARE(class ConcavePolygonShape3D);
 
 namespace zylann::voxel {
 
+// CPU-side copy of a block's meshed triangles, in block-local space, kept for consumers that rebuild things from terrain
+// geometry off the main thread (navigation). Packed arrays share the mesher's buffers, so this costs references only.
+struct VoxelMeshGeometryCache {
+	struct Surface {
+		PackedVector3Array vertices;
+		PackedInt32Array indices;
+	};
+
+	StdVector<Surface> surfaces;
+};
+
 // Stores mesh and collider for one chunk of the rendered volume.
 // It doesn't store voxel data, because it may be using different block size, or different data structure.
 // IMPORTANT: This is not an abstract class. It exists to share common code between variants of it.
@@ -24,6 +35,7 @@ namespace zylann::voxel {
 class VoxelMeshBlock : public NonCopyable {
 public:
 	Vector3i position; // In blocks
+	VoxelMeshGeometryCache geometry_cache;
 
 protected:
 	VoxelMeshBlock(Vector3i bpos);

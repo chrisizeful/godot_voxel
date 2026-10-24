@@ -3,6 +3,7 @@
 
 #include "../../meshers/voxel_mesher.h"
 #include "../../util/godot/classes/material.h"
+#include "../../util/math/box3i.h"
 #include "../../util/memory/memory.h"
 #include "../voxel_mesh_block.h"
 
@@ -30,6 +31,10 @@ public:
 
 	// Meshing tasks sent for this block whose results haven't come back yet.
 	uint32_t pending_mesh_tasks = 0;
+
+	// While mesh changes are recorded: the voxels edits have touched in this block since its last mesh came back, so the
+	// change can be reported as that box rather than the whole block. Empty when no edit is pending.
+	Box3i recorded_edit_box;
 
 	// When the collider was last rebuilt, and the mesher output of a rebuild put off by `collision_update_delay`
 	// (the latest one; earlier ones are superseded).

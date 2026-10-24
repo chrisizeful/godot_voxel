@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VoxelTerrainNavigation" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Keeps a navigation mesh in step with a [VoxelTerrain] as it is edited.
+	</brief_description>
+	<description>
+		Add as a child of a [VoxelTerrain]. The navmesh is split into square tiles, columns of [member tile_size_blocks] mesh blocks, each its own navigation region. When the voxels in a tile change (edited, or streamed in or out), the tile is rebaked on a worker thread once it has been quiet for [member bake_delay], or at least every [member max_bake_interval] while it keeps changing, and swapped in on the main thread. Only the tiles an edit can affect are rebaked: those whose baking area (the tile plus a border of about the agent's radius) the edited voxels reach.
+		Each tile bakes the terrain's own triangles together with [member static_geometry], fixed scene geometry baked offline (buildings, roads, props' obstructions). Walkable parts of that geometry that voxels now bury are dropped (see [member drop_buried_static_geometry]), so filling a road in takes it off the navmesh and digging it out puts it back.
+		Things that move but stand in the way carve the navmesh too: [NavigationObstacle3D] nodes in [member obstacle_group] with [member NavigationObstacle3D.affect_navigation_mesh] enabled. An obstacle's footprint is its vertices, or a circle of its radius, around its global position; its prism reaches from the agent's height below it to its height above, so ground a walker would hit it from counts as blocked. When one moves more than a quarter metre, appears or goes away, the tiles it leaves and enters are rebaked.
+		Settings (agent size, slope, climb, cell size) come from [member template_navigation_mesh]. Its cell size has to divide a tile into a whole number of cells, or neighbouring tiles will not join up; with [member configure_map] the navigation map's cell size and height are set to match.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="bake_all">
+			<return type="void" />
+			<description>
+				Marks every tile for rebaking now, without waiting for [member bake_delay].
+			</description>
+		</method>
+		<method name="get_pending_tile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Tiles waiting to bake or baking. Zero once the navmesh matches the terrain.
+			</description>
+		</method>
+		<method name="get_statistics" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Tile and bake counts and timings: [code]tiles[/code], [code]pending_tiles[/code], [code]bakes_in_flight[/code], [code]bake_count[/code], [code]bake_usec_last[/code], [code]bake_usec_max[/code], [code]bake_usec_average[/code] (worker time), [code]apply_usec_max[/code] (main thread), [code]dropped_results[/code] (bakes outdated before they finished), [code]edit_changes[/code] and [code]block_changes[/code] (mesh changes reported as edited boxes, or as whole blocks).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="bake_delay" type="float" setter="set_bake_delay" getter="get_bake_delay" default="0.5">
+			Seconds a tile has to go without changes before it is rebaked, so an edit made in steps bakes once.
+		</member>
+		<member name="configure_map" type="bool" setter="set_configure_map" getter="get_configure_map" default="true">
+			If true, sets the navigation map's cell size and height to the template's.
+		</member>
+		<member name="drop_buried_static_geometry" type="bool" setter="set_drop_buried_static_geometry" getter="get_drop_buried_static_geometry" default="true">
+			If true, walkable triangles of [member static_geometry] with solid voxels half the agent's height above them are left out of the bake. A baker sees only surfaces, not what is solid between them, so a road under a deep fill would otherwise still read as a walkable floor with the fill's top for a ceiling.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			While false, nothing is baked and the tiles' regions are disabled. Turn it on only where agents path, a multiplayer host for example.
+		</member>
+		<member name="max_bake_interval" type="float" setter="set_max_bake_interval" getter="get_max_bake_interval" default="2.0">
+			A tile that keeps changing (someone digging in it) is still rebaked at least this often.
+		</member>
+		<member name="max_concurrent_bakes" type="int" setter="set_max_concurrent_bakes" getter="get_max_concurrent_bakes" default="4">
+			Tile bakes allowed to run at once, as low-priority tasks on [WorkerThreadPool], which leaves the voxel engine's own threads free for meshing.
+		</member>
+		<member name="navigation_layers" type="int" setter="set_navigation_layers" getter="get_navigation_layers" default="1">
+			Navigation layers of the tiles' regions.
+		</member>
+		<member name="obstacle_group" type="StringName" setter="set_obstacle_group" getter="get_obstacle_group" default="&amp;&quot;navigation_obstacles&quot;">
+			Group whose [NavigationObstacle3D] members (with affect_navigation_mesh) carve the navmesh where they stand. With [member NavigationObstacle3D.carve_navigation_mesh] off, the agent's radius is kept clear round them too.
+		</member>
+		<member name="run_in_editor" type="bool" setter="set_run_in_editor" getter="get_run_in_editor" default="false">
+			If true, also bakes while the scene is open in the editor.
+		</member>
+		<member name="static_geometry" type="NavigationMeshSourceGeometryData3D" setter="set_static_geometry" getter="get_static_geometry">
+			Fixed geometry baked into every tile it overlaps, in world space: typically parsed once from the level's static colliders with [method NavigationServer3D.parse_source_geometry_data] and saved, with projected obstructions for props a bake can't see.
+		</member>
+		<member name="template_navigation_mesh" type="NavigationMesh" setter="set_template_navigation_mesh" getter="get_template_navigation_mesh">
+			Settings every tile bakes with. Its own polygons are not used.
+		</member>
+		<member name="tile_size_blocks" type="int" setter="set_tile_size_blocks" getter="get_tile_size_blocks" default="1">
+			Width of a tile, in mesh blocks. Smaller tiles rebake less per edit; larger ones mean fewer regions.
+		</member>
+	</members>
+</class>
