@@ -282,6 +282,9 @@ public:
 	// will be a copy, otherwise it will reference voxel data. Prefer using references when about to quit for example.
 	void consume_all_modifications(StdVector<BlockToSave> &to_save, bool with_copy);
 
+	// Tests if any loaded block has modifications that were not consumed for saving yet.
+	bool has_modified_blocks() const;
+
 	// Gets missing blocks out of the given block positions.
 	// WARNING: positions outside bounds will be considered missing too.
 	// TODO Don't consider positions outside bounds to be missing? This is only a byproduct of migrating old

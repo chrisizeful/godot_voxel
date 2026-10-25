@@ -105,6 +105,12 @@
 				Note 2: saving is asynchronous and won't block the game. the save may complete only a short time after you call this method.
 			</description>
 		</method>
+		<method name="has_unsaved_changes" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns true if the terrain holds edits that [method save_modified_blocks] has not picked up yet: modified loaded blocks, and unloaded ones held back by [member save_on_unload].
+			</description>
+		</method>
 		<method name="save_modified_blocks">
 			<return type="VoxelSaveCompletionTracker" />
 			<description>
@@ -144,6 +150,9 @@
 		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
 		</member>
 		<member name="collision_margin" type="float" setter="set_collision_margin" getter="get_collision_margin" default="0.04">
+		</member>
+		<member name="save_on_unload" type="bool" setter="set_save_on_unload" getter="get_save_on_unload" default="true">
+			If true, modified blocks are saved to the stream as soon as they unload. If false, they stay in memory until the next [method save_modified_blocks] (and reload from there), so the stream only ever contains explicit saves: a game can save its own state at the same moment and keep both consistent. Turning it back on saves the held blocks with the next process.
 		</member>
 		<member name="collision_update_delay" type="int" setter="set_collision_update_delay" getter="get_collision_update_delay" default="0">
 			How long to wait before updating a block's collider after an edit, in milliseconds; edits within that time rebuild it once, from the latest mesh. Collider generation is expensive, so the intent is to smooth it out.

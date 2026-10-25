@@ -1099,6 +1099,22 @@ void VoxelData::consume_all_modifications(StdVector<BlockToSave> &to_save, bool 
 	}
 }
 
+bool VoxelData::has_modified_blocks() const {
+	const unsigned int lod_count = get_lod_count();
+	for (unsigned int lod_index = 0; lod_index < lod_count; ++lod_index) {
+		const Lod &lod = _lods[lod_index];
+		RWLockRead rlock(lod.map_lock);
+		bool modified = false;
+		lod.map.for_each_block([&modified](const Vector3i &bpos, const VoxelDataBlock &block) {
+			modified = modified || block.is_modified();
+		});
+		if (modified) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void VoxelData::get_missing_blocks(
 		Span<const Vector3i> block_positions,
 		unsigned int lod_index,

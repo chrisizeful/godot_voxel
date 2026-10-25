@@ -370,6 +370,29 @@ int VoxelTerrain::get_collision_update_delay() const {
 	return _collision_update_delay;
 }
 
+void VoxelTerrain::set_save_on_unload(bool enabled) {
+	if (enabled == _save_on_unload) {
+		return;
+	}
+	_save_on_unload = enabled;
+	if (enabled) {
+		// Held blocks go out with the next regular save requests, as if they had just been unloaded.
+		for (auto it = _unloaded_unsaved_blocks.begin(); it != _unloaded_unsaved_blocks.end(); ++it) {
+			_blocks_to_save.push_back(VoxelData::BlockToSave{ it->second, it->first, 0 });
+			_unloaded_saving_blocks[it->first] = it->second;
+		}
+		_unloaded_unsaved_blocks.clear();
+	}
+}
+
+bool VoxelTerrain::get_save_on_unload() const {
+	return _save_on_unload;
+}
+
+bool VoxelTerrain::has_unsaved_changes() const {
+	return !_unloaded_unsaved_blocks.empty() || _data->has_modified_blocks();
+}
+
 int VoxelTerrain::get_max_view_distance() const {
 	return _max_view_distance_voxels;
 }
@@ -547,6 +570,14 @@ void VoxelTerrain::save_all_modified_blocks(bool with_copy, std::shared_ptr<Asyn
 
 	// That may cause a stutter, so should be used when the player won't notice
 	_data->consume_all_modifications(_blocks_to_save, with_copy);
+
+	// Unloaded edits held back by `save_on_unload = false` belong to this save too. Until it completes they are
+	// reloaded from `_unloaded_saving_blocks`, like blocks unloaded with saving on.
+	for (auto it = _unloaded_unsaved_blocks.begin(); it != _unloaded_unsaved_blocks.end(); ++it) {
+		_blocks_to_save.push_back(VoxelData::BlockToSave{ it->second, it->first, 0 });
+		_unloaded_saving_blocks[it->first] = it->second;
+	}
+	_unloaded_unsaved_blocks.clear();
 
 #ifdef VOXEL_ENABLE_INSTANCER
 	if (stream.is_valid() && _instancer != nullptr && stream->supports_instance_blocks()) {
@@ -787,6 +818,7 @@ void VoxelTerrain::stop_streamer() {
 	_blocks_pending_load.clear();
 	_quick_reloading_blocks.clear();
 	_unloaded_saving_blocks.clear();
+	_unloaded_unsaved_blocks.clear();
 }
 
 void VoxelTerrain::clear_mesh_map() {
@@ -1132,6 +1164,15 @@ void VoxelTerrain::send_data_load_requests() {
 		for (size_t i = 0; i < _blocks_pending_load.size(); ++i) {
 			const Vector3i block_pos = _blocks_pending_load[i];
 
+			auto unsaved_block_it = _unloaded_unsaved_blocks.find(block_pos);
+			if (unsaved_block_it != _unloaded_unsaved_blocks.end()) {
+				// Unloaded with unsaved edits: the stream has an older version, so it comes back from memory. Nothing
+				// else references that buffer, so it moves back without a copy.
+				_quick_reloading_blocks.push_back(QuickReloadingBlock{ unsaved_block_it->second, block_pos, true });
+				_unloaded_unsaved_blocks.erase(unsaved_block_it);
+				continue;
+			}
+
 			auto saving_block_it = _unloaded_saving_blocks.find(block_pos);
 			const bool quick_reloading = saving_block_it != _unloaded_saving_blocks.end();
 
@@ -1316,7 +1357,11 @@ void VoxelTerrain::process() {
 				false, // had_instances
 				true // had_voxels
 			};
-			apply_data_block_response(ob);
+			apply_data_block_response(ob, qrb.unsaved);
+			if (qrb.unsaved && !_data->has_block(qrb.position, 0)) {
+				// No longer wanted by the time it came back: keep holding it rather than dropping its edits.
+				_unloaded_unsaved_blocks[qrb.position] = qrb.voxels;
+			}
 		}
 		_quick_reloading_blocks.clear();
 	}
@@ -1634,10 +1679,27 @@ void VoxelTerrain::process_viewer_data_box_change(
 			);
 		});
 
-		// Temporarily store unloaded blocks in a map until saving completes
-		for (unsigned int i = to_save_index0; i < _blocks_to_save.size(); ++i) {
-			const VoxelData::BlockToSave &bts = _blocks_to_save[i];
-			_unloaded_saving_blocks[bts.position] = bts.voxels;
+		if (_save_on_unload) {
+			// Temporarily store unloaded blocks in a map until saving completes
+			for (unsigned int i = to_save_index0; i < _blocks_to_save.size(); ++i) {
+				const VoxelData::BlockToSave &bts = _blocks_to_save[i];
+				_unloaded_saving_blocks[bts.position] = bts.voxels;
+			}
+		} else {
+			// Hold unloaded edits in memory until the next explicit save instead of writing them now.
+			unsigned int kept = to_save_index0;
+			for (unsigned int i = to_save_index0; i < _blocks_to_save.size(); ++i) {
+				const VoxelData::BlockToSave &bts = _blocks_to_save[i];
+				if (bts.voxels == nullptr) {
+					// A block emptied of voxels is a removal from the stream, which has nothing to reload from
+					// memory; it is saved right away.
+					_unloaded_saving_blocks.erase(bts.position);
+					_blocks_to_save[kept++] = bts;
+				} else {
+					_unloaded_unsaved_blocks[bts.position] = bts.voxels;
+				}
+			}
+			_blocks_to_save.resize(kept);
 		}
 
 		{
@@ -1750,7 +1812,7 @@ void VoxelTerrain::process_viewer_data_box_change(
 	}
 }
 
-void VoxelTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob) {
+void VoxelTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob, bool modified) {
 	ZN_PROFILE_SCOPE();
 
 	// print_line(String("Receiving {0} blocks").format(varray(output.emerged_blocks.size())));
@@ -1825,6 +1887,7 @@ void VoxelTerrain::apply_data_block_response(VoxelEngine::BlockDataOutput &ob) {
 
 	VoxelDataBlock block(ob.voxels, ob.lod_index);
 	block.set_edited(ob.type == VoxelEngine::BlockDataOutput::TYPE_LOADED);
+	block.set_modified(modified);
 	// Viewers will be set only if the block doesn't already exist
 	block.viewers = loading_block.viewers;
 
@@ -2635,6 +2698,9 @@ void VoxelTerrain::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_statistics"), &Self::_b_get_statistics);
 
 	ClassDB::bind_method(D_METHOD("save_modified_blocks"), &Self::_b_save_modified_blocks);
+	ClassDB::bind_method(D_METHOD("has_unsaved_changes"), &Self::has_unsaved_changes);
+	ClassDB::bind_method(D_METHOD("set_save_on_unload", "enabled"), &Self::set_save_on_unload);
+	ClassDB::bind_method(D_METHOD("get_save_on_unload"), &Self::get_save_on_unload);
 	ClassDB::bind_method(D_METHOD("save_block", "position"), &Self::_b_save_block);
 
 	ClassDB::bind_method(D_METHOD("set_automatic_loading_enabled", "enable"), &Self::set_automatic_loading_enabled);
@@ -2739,6 +2805,8 @@ void VoxelTerrain::_bind_methods() {
 	);
 
 	ADD_GROUP("Advanced", "");
+
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "save_on_unload"), "set_save_on_unload", "get_save_on_unload");
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_block_size"), "set_mesh_block_size", "get_mesh_block_size");
 #ifdef VOXEL_ENABLE_GPU

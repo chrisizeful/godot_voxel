@@ -87,6 +87,12 @@ public:
 	void set_collision_update_delay(int delay_msec);
 	int get_collision_update_delay() const;
 
+	void set_save_on_unload(bool enabled);
+	bool get_save_on_unload() const;
+
+	// True if edits exist that `save_modified_blocks` has not picked up yet.
+	bool has_unsaved_changes() const;
+
 	int get_max_view_distance() const;
 	void set_max_view_distance(int distance_in_voxels);
 
@@ -245,7 +251,7 @@ private:
 	void process_deferred_collision_updates(uint32_t timeout_msec);
 	void set_block_collision_shape(VoxelMeshBlockVT &block, Ref<Shape3D> collision_shape, const uint64_t now);
 	void apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob);
-	void apply_data_block_response(VoxelEngine::BlockDataOutput &ob);
+	void apply_data_block_response(VoxelEngine::BlockDataOutput &ob, bool modified = false);
 
 	void _on_stream_params_changed();
 	// void _set_block_size_po2(int p_block_size_po2);
@@ -375,10 +381,16 @@ private:
 	// and is checked first before loading new blocks. This is in case players leave an area and come back to it faster
 	// than saving, because otherwise loading from stream would return an outdated version.
 	StdUnorderedMap<Vector3i, std::shared_ptr<VoxelBuffer>> _unloaded_saving_blocks;
+	// When `_save_on_unload` is off: modified data blocks that were unloaded, kept in memory until the next
+	// `save_all_modified_blocks`, so the stream only ever receives explicit saves. Checked first when loading blocks.
+	StdUnorderedMap<Vector3i, std::shared_ptr<VoxelBuffer>> _unloaded_unsaved_blocks;
+	bool _save_on_unload = true;
 	// List of data blocks that will be used to simulate a loading response on the next process call.
 	struct QuickReloadingBlock {
 		std::shared_ptr<VoxelBuffer> voxels;
 		Vector3i position;
+		// Comes from `_unloaded_unsaved_blocks`: its edits are not saved, so it goes back in as modified.
+		bool unsaved = false;
 	};
 	StdVector<QuickReloadingBlock> _quick_reloading_blocks;
 
