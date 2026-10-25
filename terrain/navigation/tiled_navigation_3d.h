@@ -36,7 +36,7 @@ public:
 	PackedInt32Array static_indices;
 	StdVector<int32_t> static_triangles;
 	StdVector<TileObstruction> obstructions;
-	// Geometry the game added for this tile alone (tile_geometry_callback), baked as it is.
+	// Geometry the game added for this tile alone (tile_geometry_callback), treated like the fixed geometry.
 	PackedFloat32Array extra_vertices;
 	PackedInt32Array extra_indices;
 	real_t walkable_cos = 0.f;
@@ -61,10 +61,9 @@ protected:
 	}
 
 private:
-	Vector3 static_vertex(int32_t index) const;
 	bool is_walkable(const Vector3 &a, const Vector3 &b, const Vector3 &c) const;
-	void add_static_triangles(PackedFloat32Array &vertices, PackedInt32Array &indices);
-	void add_extra_triangles(PackedFloat32Array &vertices, PackedInt32Array &indices) const;
+	// The fixed geometry touching this tile and the extra geometry, as triangle corners, without what's buried.
+	void add_fixed_triangles(PackedFloat32Array &vertices, PackedInt32Array &indices);
 };
 
 // Keeps a navigation mesh in step with a level at runtime, as square tiles of navigation region rebaked on worker
@@ -118,6 +117,15 @@ public:
 
 	void set_tile_geometry_callback(Callable callback);
 	Callable get_tile_geometry_callback() const;
+
+	void set_area(AABB area);
+	AABB get_area() const;
+
+	void set_obstacle_settle_time(float seconds);
+	float get_obstacle_settle_time() const;
+
+	void set_use_edge_connections(bool enable);
+	bool get_use_edge_connections() const;
 
 	// Marks every tile for rebaking now, without waiting for bake_delay.
 	void bake_all();
@@ -178,6 +186,9 @@ private:
 	struct Obstacle {
 		TileObstruction obstruction;
 		AABB bounds;
+		// How long it has stayed put; it carves only once that reaches obstacle_settle_time.
+		float still_for = 0.f;
+		bool carving = false;
 	};
 
 	struct RunningBake {
@@ -212,6 +223,10 @@ private:
 	StringName _obstacle_group = "navigation_obstacles";
 	RID _navigation_map;
 	Callable _tile_geometry_callback;
+	// Covered by tiles even where no fixed geometry reaches (ground the callback adds).
+	AABB _area;
+	float _obstacle_settle_time = 1.f;
+	bool _use_edge_connections = true;
 	real_t _tile_size = 16.0;
 	// Vertical extent of the tiles, in world space.
 	real_t _min_y = 0.f;

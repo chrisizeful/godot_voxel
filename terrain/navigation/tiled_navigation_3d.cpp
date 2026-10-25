@@ -97,8 +97,7 @@ void TileBakeTask::run() {
 	PackedFloat32Array vertices;
 	PackedInt32Array indices;
 	add_own_triangles(vertices, indices);
-	add_static_triangles(vertices, indices);
-	add_extra_triangles(vertices, indices);
+	add_fixed_triangles(vertices, indices);
 
 	// append_arrays(): set_indices() refuses more indices than vertex floats, which indexed meshes have.
 	Ref<NavigationMeshSourceGeometryData3D> source;
@@ -111,49 +110,58 @@ void TileBakeTask::run() {
 	bake_usec = clock.get_elapsed_microseconds();
 }
 
-Vector3 TileBakeTask::static_vertex(int32_t index) const {
-	const float *v = static_vertices.ptr() + int64_t(index) * 3;
-	return Vector3(v[0], v[1], v[2]);
-}
-
 bool TileBakeTask::is_walkable(const Vector3 &a, const Vector3 &b, const Vector3 &c) const {
 	const Vector3 n = (b - a).cross(c - a);
 	const real_t len = n.length();
 	return len > 0.0 && n.y / len >= walkable_cos;
 }
 
-void TileBakeTask::add_static_triangles(PackedFloat32Array &vertices, PackedInt32Array &indices) {
+void TileBakeTask::add_fixed_triangles(PackedFloat32Array &vertices, PackedInt32Array &indices) {
 	ZN_PROFILE_SCOPE();
-	if (static_triangles.empty()) {
+	StdVector<Vector3> candidates;
+	candidates.reserve(static_triangles.size() * 3 + extra_indices.size());
+	const float *sv = static_vertices.ptr();
+	for (const int32_t t : static_triangles) {
+		for (int k = 0; k < 3; ++k) {
+			const int64_t i = int64_t(static_indices[t * 3 + k]) * 3;
+			candidates.push_back(Vector3(sv[i], sv[i + 1], sv[i + 2]));
+		}
+	}
+	const float *ev = extra_vertices.ptr();
+	for (int t = 0; t + 2 < extra_indices.size(); t += 3) {
+		for (int k = 0; k < 3; ++k) {
+			const int64_t i = int64_t(extra_indices[t + k]) * 3;
+			candidates.push_back(Vector3(ev[i], ev[i + 1], ev[i + 2]));
+		}
+	}
+	if (candidates.empty()) {
 		return;
 	}
+
 	// Only walkable triangles can be buried floors.
 	AABB walkable_box;
 	bool any_walkable = false;
-	for (const int32_t t : static_triangles) {
-		const Vector3 a = static_vertex(static_indices[t * 3]);
-		const Vector3 b = static_vertex(static_indices[t * 3 + 1]);
-		const Vector3 c = static_vertex(static_indices[t * 3 + 2]);
-		if (!is_walkable(a, b, c)) {
+	for (size_t t = 0; t + 2 < candidates.size(); t += 3) {
+		if (!is_walkable(candidates[t], candidates[t + 1], candidates[t + 2])) {
 			continue;
 		}
 		if (!any_walkable) {
-			walkable_box = AABB(a, Vector3());
+			walkable_box = AABB(candidates[t], Vector3());
 			any_walkable = true;
 		}
-		walkable_box.expand_to(a);
-		walkable_box.expand_to(b);
-		walkable_box.expand_to(c);
+		walkable_box.expand_to(candidates[t]);
+		walkable_box.expand_to(candidates[t + 1]);
+		walkable_box.expand_to(candidates[t + 2]);
 	}
 	const bool test_burial = any_walkable && prepare_burial(walkable_box.intersection(baking_bounds));
 
 	StdVector<Vector3> kept;
-	kept.reserve(static_triangles.size() * 3);
+	kept.reserve(candidates.size());
 	StdVector<Vector3> stack;
-	for (const int32_t t : static_triangles) {
-		const Vector3 a = static_vertex(static_indices[t * 3]);
-		const Vector3 b = static_vertex(static_indices[t * 3 + 1]);
-		const Vector3 c = static_vertex(static_indices[t * 3 + 2]);
+	for (size_t t = 0; t + 2 < candidates.size(); t += 3) {
+		const Vector3 a = candidates[t];
+		const Vector3 b = candidates[t + 1];
+		const Vector3 c = candidates[t + 2];
 		if (!test_burial || !is_walkable(a, b, c)) {
 			kept.push_back(a);
 			kept.push_back(b);
@@ -209,20 +217,6 @@ void TileBakeTask::add_static_triangles(PackedFloat32Array &vertices, PackedInt3
 		vw[i * 3 + 1] = kept[i].y;
 		vw[i * 3 + 2] = kept[i].z;
 		iw[i] = int32_t(vertex_start + i);
-	}
-}
-
-void TileBakeTask::add_extra_triangles(PackedFloat32Array &vertices, PackedInt32Array &indices) const {
-	if (extra_indices.size() < 3) {
-		return;
-	}
-	const int32_t base = int32_t(vertices.size() / 3);
-	vertices.append_array(extra_vertices);
-	const int64_t start = indices.size();
-	indices.resize(start + extra_indices.size());
-	int32_t *iw = indices.ptrw() + start;
-	for (int i = 0; i < extra_indices.size(); ++i) {
-		iw[i] = extra_indices[i] + base;
 	}
 }
 
@@ -385,6 +379,36 @@ Callable TiledNavigation3D::get_tile_geometry_callback() const {
 	return _tile_geometry_callback;
 }
 
+void TiledNavigation3D::set_obstacle_settle_time(float seconds) {
+	_obstacle_settle_time = MAX(seconds, 0.f);
+}
+
+float TiledNavigation3D::get_obstacle_settle_time() const {
+	return _obstacle_settle_time;
+}
+
+void TiledNavigation3D::set_use_edge_connections(bool enable) {
+	_use_edge_connections = enable;
+	for (auto &it : _tiles) {
+		if (it.second.region != nullptr) {
+			it.second.region->set_use_edge_connections(enable);
+		}
+	}
+}
+
+bool TiledNavigation3D::get_use_edge_connections() const {
+	return _use_edge_connections;
+}
+
+void TiledNavigation3D::set_area(AABB area) {
+	_area = area;
+	request_layout();
+}
+
+AABB TiledNavigation3D::get_area() const {
+	return _area;
+}
+
 void TiledNavigation3D::bake_all() {
 	for (auto &it : _tiles) {
 		mark_dirty(it.second);
@@ -414,7 +438,11 @@ Dictionary TiledNavigation3D::get_statistics() const {
 	d["bake_usec_average"] = _bake_count > 0 ? int64_t(_bake_usec_total / _bake_count) : int64_t(0);
 	d["apply_usec_max"] = _apply_usec_max;
 	d["dropped_results"] = _dropped_results;
-	d["obstacles"] = int64_t(_obstacles.size());
+	int64_t carving = 0;
+	for (const auto &it : _obstacles) {
+		carving += it.second.carving ? 1 : 0;
+	}
+	d["obstacles"] = carving;
 	d["layouts"] = _layout_count;
 	d["fixed_triangles"] = _fixed_triangle_count;
 	add_statistics(d);
@@ -480,11 +508,12 @@ float TiledNavigation3D::get_border_size() const {
 	if (_template_navmesh.is_null()) {
 		return 1.f;
 	}
-	// Room for the agent's radius to be eroded off the tile edge from geometry beyond it, rounded up to whole cells so
-	// neighbouring tiles' grids line up.
+	// Room for the agent's radius to be eroded off the tile edge from geometry beyond it, plus Recast's three cells for
+	// tiles, rounded up to whole cells so neighbouring tiles' grids line up (less a hair, so a whole number in floats
+	// isn't rounded up a cell).
 	const float cell = _template_navmesh->get_cell_size();
 	const float radius = _template_navmesh->get_agent_radius();
-	return Math::ceil((radius + 2.f * cell) / cell) * cell;
+	return Math::ceil((radius + 3.f * cell) / cell - 0.001f) * cell;
 }
 
 Vector2i TiledNavigation3D::world_to_tile(const Vector3 &pos) const {
@@ -510,7 +539,7 @@ TiledNavigation3D::Tile &TiledNavigation3D::get_or_create_tile(Vector2i tile_pos
 	tile.region = memnew(NavigationRegion3D);
 	// Tiles are baked in world space and meet edge to edge on a shared cell grid, which the map merges by itself.
 	tile.region->set_as_top_level(true);
-	tile.region->set_use_edge_connections(false);
+	tile.region->set_use_edge_connections(_use_edge_connections);
 	tile.region->set_navigation_layers(_navigation_layers);
 	tile.region->set_enabled(_enabled);
 	add_child(tile.region);
@@ -621,6 +650,10 @@ void TiledNavigation3D::lay_out_tiles() {
 		has_extent = true;
 	}
 	merge_extent(extent, has_extent);
+	if (_area.size.x > 0 && _area.size.z > 0) {
+		extent = has_extent ? extent.merge(_area) : _area;
+		has_extent = true;
+	}
 	// On a world-aligned grid of cell heights, so every tile (of every node on the map) slices heights the same way.
 	const real_t cell_height = _template_navmesh->get_cell_height();
 	_min_y = Math::floor(((has_extent ? extent.position.y : real_t(0)) - 1.0) / cell_height) * cell_height;
@@ -665,6 +698,16 @@ void TiledNavigation3D::lay_out_tiles() {
 				for (int x = from.x; x <= to.x; ++x) {
 					get_or_create_tile(Vector2i(x, z)).static_obstructions.push_back(i);
 				}
+			}
+		}
+	}
+
+	if (_area.size.x > 0 && _area.size.z > 0) {
+		const Vector2i from = world_to_tile(_area.position);
+		const Vector2i to = world_to_tile(_area.position + _area.size);
+		for (int z = from.y; z <= to.y; ++z) {
+			for (int x = from.x; x <= to.x; ++x) {
+				get_or_create_tile(Vector2i(x, z));
 			}
 		}
 	}
@@ -715,26 +758,36 @@ void TiledNavigation3D::update_obstacles() {
 			current[uint64_t(node->get_instance_id())] = o;
 		}
 	}
+	// Carving is for what stands still: something on the move (a vehicle's driver, a burrower charging) is left to
+	// avoidance, or every tile along its way would rebake as it passes.
 	for (auto &it : current) {
+		Obstacle &now = it.second;
 		auto old = _obstacles.find(it.first);
 		if (old == _obstacles.end()) {
-			mark_dirty_in_aabb(it.second.bounds);
 			continue;
 		}
-		const AABB &a = old->second.bounds;
-		const AABB &b = it.second.bounds;
-		if (a.position.distance_to(b.position) > OBSTACLE_MOVE_TOLERANCE ||
-			(a.size - b.size).length() > OBSTACLE_MOVE_TOLERANCE ||
-			old->second.obstruction.carve != it.second.obstruction.carve) {
-			mark_dirty_in_aabb(a);
-			mark_dirty_in_aabb(b);
-		} else {
-			// Not moved enough to rebake: keep baking it where it was, so the navmesh and the record agree.
-			it.second = old->second;
+		const Obstacle &was = old->second;
+		const bool moved = was.bounds.position.distance_to(now.bounds.position) > OBSTACLE_MOVE_TOLERANCE ||
+				(was.bounds.size - now.bounds.size).length() > OBSTACLE_MOVE_TOLERANCE ||
+				was.obstruction.carve != now.obstruction.carve;
+		if (moved) {
+			if (was.carving) {
+				mark_dirty_in_aabb(was.bounds);
+			}
+			continue;
 		}
+		// Not moved enough to count: keep it where it was, so the navmesh and the record agree.
+		const float still_for = was.still_for + OBSTACLE_CHECK_INTERVAL;
+		const bool carving = was.carving || still_for >= _obstacle_settle_time;
+		now = was;
+		now.still_for = still_for;
+		if (carving && !was.carving) {
+			mark_dirty_in_aabb(now.bounds);
+		}
+		now.carving = carving;
 	}
 	for (const auto &it : _obstacles) {
-		if (current.find(it.first) == current.end()) {
+		if (it.second.carving && current.find(it.first) == current.end()) {
 			mark_dirty_in_aabb(it.second.bounds);
 		}
 	}
@@ -805,6 +858,8 @@ void TiledNavigation3D::start_bake(uint64_t key, Tile &tile) {
 	task->navmesh->set_filter_baking_aabb(baking_bounds);
 	task->navmesh->set_filter_baking_aabb_offset(Vector3());
 	task->navmesh->set_border_size(border);
+	// Tile edges only stay on the tile's bounds (so neighbours' edges meet) with this at 1 or under.
+	task->navmesh->set_edge_max_error(MIN(task->navmesh->get_edge_max_error(), 1.0f));
 
 	const Ref<NavigationMeshSourceGeometryData3D> fixed = get_fixed_geometry();
 	if (fixed.is_valid()) {
@@ -831,7 +886,7 @@ void TiledNavigation3D::start_bake(uint64_t key, Tile &tile) {
 	}
 
 	for (const auto &it : _obstacles) {
-		if (it.second.bounds.intersects(baking_bounds)) {
+		if (it.second.carving && it.second.bounds.intersects(baking_bounds)) {
 			task->obstructions.push_back(it.second.obstruction);
 		}
 	}
@@ -968,6 +1023,19 @@ void TiledNavigation3D::_bind_methods() {
 	);
 	ClassDB::bind_method(D_METHOD("get_tile_geometry_callback"), &TiledNavigation3D::get_tile_geometry_callback);
 
+	ClassDB::bind_method(
+			D_METHOD("set_obstacle_settle_time", "seconds"), &TiledNavigation3D::set_obstacle_settle_time
+	);
+	ClassDB::bind_method(D_METHOD("get_obstacle_settle_time"), &TiledNavigation3D::get_obstacle_settle_time);
+
+	ClassDB::bind_method(
+			D_METHOD("set_use_edge_connections", "enabled"), &TiledNavigation3D::set_use_edge_connections
+	);
+	ClassDB::bind_method(D_METHOD("get_use_edge_connections"), &TiledNavigation3D::get_use_edge_connections);
+
+	ClassDB::bind_method(D_METHOD("set_area", "area"), &TiledNavigation3D::set_area);
+	ClassDB::bind_method(D_METHOD("get_area"), &TiledNavigation3D::get_area);
+
 	ClassDB::bind_method(D_METHOD("bake_all"), &TiledNavigation3D::bake_all);
 	ClassDB::bind_method(D_METHOD("get_pending_tile_count"), &TiledNavigation3D::get_pending_tile_count);
 	ClassDB::bind_method(D_METHOD("get_statistics"), &TiledNavigation3D::get_statistics);
@@ -1025,6 +1093,15 @@ void TiledNavigation3D::_bind_methods() {
 	);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "configure_map"), "set_configure_map", "get_configure_map");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING_NAME, "obstacle_group"), "set_obstacle_group", "get_obstacle_group");
+	ADD_PROPERTY(PropertyInfo(Variant::AABB, "area"), "set_area", "get_area");
+	ADD_PROPERTY(
+			PropertyInfo(Variant::FLOAT, "obstacle_settle_time", PROPERTY_HINT_RANGE, "0,5,0.05,or_greater,suffix:s"),
+			"set_obstacle_settle_time",
+			"get_obstacle_settle_time"
+	);
+	ADD_PROPERTY(
+			PropertyInfo(Variant::BOOL, "use_edge_connections"), "set_use_edge_connections", "get_use_edge_connections"
+	);
 }
 
 } // namespace zylann::voxel
