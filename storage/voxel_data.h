@@ -121,6 +121,10 @@ public:
 			const bool with_metadata
 	) const;
 
+	// Like copy() without metadata, but blocks that aren't loaded are generated after the spatial lock is released, so a
+	// caller off the main thread doesn't hold back the main thread's block loading while the generator runs.
+	void copy_generating_unlocked(const Vector3i min_pos, VoxelBuffer &dst_buffer, const unsigned int channels_mask) const;
+
 	// Pastes voxel data in a box at LOD0.
 	// `channels_mask` bits tell which channel is pasted.
 	// If `use_mask` is used, will only write voxels of the source buffer that are not equal to `mask_value`.

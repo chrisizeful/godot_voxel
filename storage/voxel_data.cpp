@@ -322,6 +322,56 @@ bool VoxelData::try_set_voxel_f(const real_t value, const Vector3i pos, const un
 	return try_set_voxel(raw, pos, channel_index);
 }
 
+void VoxelData::copy_generating_unlocked(
+		const Vector3i min_pos,
+		VoxelBuffer &dst_buffer,
+		const unsigned int channels_mask
+) const {
+	ZN_PROFILE_SCOPE();
+	const Lod &data_lod0 = _lods[0];
+	Ref<VoxelGenerator> generator = get_generator();
+	get_format().configure_buffer(dst_buffer);
+
+	// Boxes of the blocks that weren't loaded, left as defaults by the locked copy and generated afterwards.
+	StdVector<Box3i> missing;
+	void (*record_missing)(void *, VoxelBuffer &, Vector3i) = [](void *callback_data, VoxelBuffer &voxels, Vector3i pos) {
+		reinterpret_cast<StdVector<Box3i> *>(callback_data)->push_back(Box3i(pos, voxels.get_size()));
+	};
+	{
+		const Box3i blocks_box = Box3i(min_pos, dst_buffer.get_size()).downscaled(data_lod0.map.get_block_size());
+		SpatialLock3D::Read srlock(data_lod0.spatial_lock, BoxBounds3i(blocks_box));
+		RWLockRead rlock(data_lod0.map_lock);
+		data_lod0.map.copy(
+				min_pos,
+				dst_buffer,
+				channels_mask,
+				generator.is_valid() ? &missing : nullptr,
+				generator.is_valid() ? record_missing : nullptr,
+				false
+		);
+	}
+
+	const SmallVector<uint8_t, VoxelBuffer::MAX_CHANNELS> channels = VoxelBuffer::mask_to_channels_list(channels_mask);
+	for (const Box3i &box : missing) {
+		// Out of bounds stays empty, as in copy().
+		if (!_bounds_in_voxels.contains(box.position)) {
+			continue;
+		}
+		ZN_PROFILE_SCOPE_NAMED("Generate");
+		VoxelBuffer temp(VoxelBuffer::ALLOCATOR_POOL);
+		temp.copy_format(dst_buffer);
+		temp.create(box.size);
+		VoxelGenerator::VoxelQueryData q{ temp, box.position, 0 };
+		generator->generate_block(q);
+#ifdef VOXEL_ENABLE_MODIFIERS
+		_modifiers.apply(temp, AABB(box.position, temp.get_size()));
+#endif
+		for (const uint8_t channel : channels) {
+			dst_buffer.copy_channel_from(temp, Vector3i(), temp.get_size(), box.position - min_pos, channel);
+		}
+	}
+}
+
 void VoxelData::copy(
 		const Vector3i min_pos,
 		VoxelBuffer &dst_buffer,

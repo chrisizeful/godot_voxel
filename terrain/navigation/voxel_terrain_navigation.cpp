@@ -90,7 +90,9 @@ protected:
 		}
 		_sdf_origin = clipped.position;
 		_sdf.create(clipped.size);
-		voxel_data->copy(clipped.position, _sdf, 1 << VoxelBuffer::CHANNEL_SDF, false);
+		// Unloaded blocks are generated outside the spatial lock: holding it through the generator stalled the main
+		// thread's block loading whenever a viewer crossed a mesh block.
+		voxel_data->copy_generating_unlocked(clipped.position, _sdf, 1 << VoxelBuffer::CHANNEL_SDF);
 		return true;
 	}
 
