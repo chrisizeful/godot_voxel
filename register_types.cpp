@@ -38,6 +38,7 @@
 #include "terrain/fixed_lod/voxel_box_mover.h"
 #include "terrain/fixed_lod/voxel_terrain.h"
 #include "terrain/fixed_lod/voxel_terrain_multiplayer_synchronizer.h"
+#include "terrain/navigation/tiled_navigation_3d.h"
 #include "terrain/navigation/voxel_terrain_navigation.h"
 #include "terrain/variable_lod/voxel_lod_terrain.h"
 #include "terrain/voxel_a_star_grid_3d.h"
@@ -343,6 +344,7 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_abstract_class<zylann::voxel::godot::VoxelModifier>();
 		ClassDB::register_class<zylann::voxel::godot::VoxelModifierSphere>();
 		ClassDB::register_class<zylann::voxel::godot::VoxelModifierMesh>();
+		ClassDB::register_class<TiledNavigation3D>();
 		ClassDB::register_class<VoxelTerrainNavigation>();
 #endif
 

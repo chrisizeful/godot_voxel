@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TiledNavigation3D" inherits="Node3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Keeps a navigation mesh in step with a level at runtime, as tiles rebaked when what's in them changes.
+	</brief_description>
+	<description>
+		The navmesh is split into square tiles [member tile_size] across, on a grid aligned to the world, each its own navigation region. A tile is rebaked on a worker thread (a low-priority [WorkerThreadPool] task) once what's in it has been quiet for [member bake_delay], or at least every [member max_bake_interval] while it keeps changing, and swapped in on the main thread. Tiles meet edge to edge on a shared cell grid (horizontal and vertical), which the navigation map merges by itself.
+		Each tile bakes fixed geometry: [member static_geometry] if set, else whatever [member source_geometry_root] holds, parsed once (with the template's parse settings) and moved into world space. Things that move but stand in the way carve it too: [NavigationObstacle3D] nodes in [member obstacle_group] with [member NavigationObstacle3D.affect_navigation_mesh] enabled. An obstacle's footprint is its vertices, or a circle of its radius, round its global position; its prism reaches from the agent's height below it to its height above, so ground a walker would hit it from counts as blocked. When one moves more than a quarter metre, appears or goes away, the tiles it leaves and enters are rebaked. With [member NavigationObstacle3D.carve_navigation_mesh] off, the agent's radius is kept clear round it too.
+		A level whose ground the scene tree can't parse (a heightmap terrain) can add it per tile through [method set_tile_geometry_callback].
+		Settings (agent size, slope, climb, cells) come from [member template_navigation_mesh]. Its cell size has to divide [member tile_size] into a whole number of cells, or neighbouring tiles won't join up; with [member configure_map] the navigation map's cell size and height are set to match. Agent sizes that aren't whole cells are rounded by the baker, with a warning every bake.
+		Subclasses add geometry that changes by itself; see [VoxelTerrainNavigation].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="bake_all">
+			<return type="void" />
+			<description>
+				Marks every tile for rebaking now, without waiting for [member bake_delay].
+			</description>
+		</method>
+		<method name="get_navigation_map" qualifiers="const">
+			<return type="RID" />
+			<description>
+				The navigation map the tiles are on: the one given to [method set_navigation_map], else the world's.
+			</description>
+		</method>
+		<method name="get_pending_tile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Tiles waiting to bake or baking (counting a layout still due as one). Zero once the navmesh matches the level.
+			</description>
+		</method>
+		<method name="get_statistics" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Tile and bake counts and timings: [code]tiles[/code], [code]pending_tiles[/code], [code]bakes_in_flight[/code], [code]bake_count[/code], [code]bake_usec_last[/code], [code]bake_usec_max[/code], [code]bake_usec_average[/code] (worker time), [code]apply_usec_max[/code] (main thread), [code]dropped_results[/code] (bakes outdated before they finished), [code]obstacles[/code] (carving now), [code]layouts[/code] (times the tiles were laid out, after parsing) and [code]fixed_triangles[/code] (in the fixed geometry at the last layout). Subclasses add their own.
+			</description>
+		</method>
+		<method name="get_tile_geometry_callback" qualifiers="const">
+			<return type="Callable" />
+			<description>
+			</description>
+		</method>
+		<method name="set_navigation_map">
+			<return type="void" />
+			<param index="0" name="map" type="RID" />
+			<description>
+				Puts the tiles on [param map] instead of the world's navigation map.
+			</description>
+		</method>
+		<method name="set_tile_geometry_callback">
+			<return type="void" />
+			<param index="0" name="callback" type="Callable" />
+			<description>
+				Called on the main thread before each tile bakes, with the tile's baking bounds ([AABB], the tile and its border) and an empty [NavigationMeshSourceGeometryData3D] to add world-space geometry to; it's baked with the tile as it is. Rebakes every tile.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="bake_delay" type="float" setter="set_bake_delay" getter="get_bake_delay" default="0.5">
+			Seconds a tile has to go without changes before it is rebaked, so a change made in steps bakes once.
+		</member>
+		<member name="configure_map" type="bool" setter="set_configure_map" getter="get_configure_map" default="true">
+			If true, sets the navigation map's cell size and height to the template's.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			While false, nothing is baked and the tiles' regions are disabled. Turn it on only where agents path, a multiplayer host for example.
+		</member>
+		<member name="max_bake_interval" type="float" setter="set_max_bake_interval" getter="get_max_bake_interval" default="2.0">
+			A tile that keeps changing is still rebaked at least this often.
+		</member>
+		<member name="max_concurrent_bakes" type="int" setter="set_max_concurrent_bakes" getter="get_max_concurrent_bakes" default="4">
+			Tile bakes allowed to run at once.
+		</member>
+		<member name="navigation_layers" type="int" setter="set_navigation_layers" getter="get_navigation_layers" default="1">
+			Navigation layers of the tiles' regions.
+		</member>
+		<member name="obstacle_group" type="StringName" setter="set_obstacle_group" getter="get_obstacle_group" default="&amp;&quot;navigation_obstacles&quot;">
+			Group whose [NavigationObstacle3D] members (with affect_navigation_mesh) carve the navmesh where they stand. They're switched off while [member source_geometry_root] is parsed, so they're never baked in for good.
+		</member>
+		<member name="run_in_editor" type="bool" setter="set_run_in_editor" getter="get_run_in_editor" default="false">
+			If true, also bakes while the scene is open in the editor.
+		</member>
+		<member name="source_geometry_root" type="NodePath" setter="set_source_geometry_root" getter="get_source_geometry_root" default="NodePath(&quot;&quot;)">
+			Without [member static_geometry], the node whose geometry is parsed (once, when the tiles are laid out) for the fixed geometry. Setting it, even to the same path, parses it again.
+		</member>
+		<member name="static_geometry" type="NavigationMeshSourceGeometryData3D" setter="set_static_geometry" getter="get_static_geometry">
+			Fixed geometry baked into every tile it overlaps, in world space: typically parsed once offline with [method NavigationServer3D.parse_source_geometry_data] and saved, with projected obstructions for props a bake can't see.
+		</member>
+		<member name="template_navigation_mesh" type="NavigationMesh" setter="set_template_navigation_mesh" getter="get_template_navigation_mesh">
+			Settings every tile bakes with. Its own polygons are not used.
+		</member>
+		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="16.0">
+			Width of a tile, in metres. Smaller tiles rebake less per change; larger ones mean fewer regions.
+		</member>
+	</members>
+</class>
