@@ -737,16 +737,19 @@ void TiledNavigation3D::update_obstacles() {
 			const Vector3 pos = node->get_global_position();
 			Obstacle o;
 			const PackedVector3Array local = node->get_vertices();
+			// As Godot's own obstacle parser does: projected onto the ground, so turned about Y and scaled, nothing else.
+			const Vector3 scale = node->get_global_basis().get_scale().abs().maxf(0.001);
 			if (local.size() >= 3) {
+				const Transform3D xform(Basis().scaled(scale).rotated(Vector3(0, 1, 0), node->get_global_rotation().y), pos);
 				for (int k = 0; k < local.size(); ++k) {
-					o.obstruction.vertices.push_back(Vector3(pos.x + local[k].x, 0, pos.z + local[k].z));
+					const Vector3 v = xform.xform(local[k]);
+					o.obstruction.vertices.push_back(Vector3(v.x, 0, v.z));
 				}
 			} else if (node->get_radius() > 0.f) {
+				const real_t radius = node->get_radius() * scale[scale.max_axis_index()];
 				for (int k = 0; k < OBSTACLE_CIRCLE_SIDES; ++k) {
 					const real_t a = Math_TAU * k / OBSTACLE_CIRCLE_SIDES;
-					o.obstruction.vertices.push_back(
-							Vector3(pos.x + Math::cos(a) * node->get_radius(), 0, pos.z + Math::sin(a) * node->get_radius())
-					);
+					o.obstruction.vertices.push_back(Vector3(pos.x + Math::cos(a) * radius, 0, pos.z + Math::sin(a) * radius));
 				}
 			} else {
 				continue;
