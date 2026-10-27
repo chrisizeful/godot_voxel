@@ -1251,8 +1251,14 @@ void VoxelLodTerrain::process(float delta) {
 		{
 			VoxelLodTerrainUpdateData &update_data = *_update_data;
 			update_data.viewers.clear();
+			const Ref<World3D> world = get_world_3d();
+			const uint64_t world_id = world.is_valid() ? uint64_t(world->get_instance_id()) : 0;
 			VoxelEngine::get_singleton().for_each_viewer(
-					[&update_data](ViewerID id, const VoxelEngine::Viewer &viewer) { //
+					[&update_data, world_id](ViewerID id, const VoxelEngine::Viewer &viewer) { //
+						// Only viewers in this terrain's world (see VoxelEngine::Viewer::world_id).
+						if (viewer.world_id != 0 && world_id != 0 && viewer.world_id != world_id) {
+							return;
+						}
 						update_data.viewers.push_back({ id, viewer });
 					}
 			);

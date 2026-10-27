@@ -2,6 +2,7 @@
 #include "../engine/voxel_engine.h"
 #include "../util/godot/classes/engine.h"
 #include "../util/godot/classes/node.h"
+#include "../util/godot/classes/world_3d.h"
 #include "../util/math/conv.h"
 #include "../util/string/format.h"
 
@@ -131,6 +132,8 @@ void VoxelViewer::sync_all_parameters() {
 	ve.set_viewer_requires_collisions(_viewer_id, _requires_collisions);
 	ve.set_viewer_requires_data_block_notifications(_viewer_id, _requires_data_block_notifications);
 	ve.set_viewer_network_peer_id(_viewer_id, _network_peer_id);
+	const Ref<World3D> world = get_world_3d();
+	ve.set_viewer_world_id(_viewer_id, world.is_valid() ? uint64_t(world->get_instance_id()) : 0);
 	const Vector3 pos = get_global_transform().origin;
 	ve.set_viewer_position(_viewer_id, pos);
 }

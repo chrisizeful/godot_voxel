@@ -244,6 +244,11 @@ bool VoxelEngine::is_viewer_requiring_data_block_notifications(ViewerID viewer_i
 	return viewer.requires_data_block_notifications;
 }
 
+void VoxelEngine::set_viewer_world_id(ViewerID viewer_id, uint64_t world_id) {
+	Viewer &viewer = _world.viewers.get(viewer_id);
+	viewer.world_id = world_id;
+}
+
 void VoxelEngine::set_viewer_network_peer_id(ViewerID viewer_id, int peer_id) {
 	Viewer &viewer = _world.viewers.get(viewer_id);
 	viewer.network_peer_id = peer_id;

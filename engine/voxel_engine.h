@@ -144,6 +144,9 @@ public:
 		bool require_visuals = true;
 		bool requires_data_block_notifications = false;
 		int network_peer_id = -1;
+		// Instance ID of the World3D the viewer is in. Terrains only pair viewers in their own world, so worlds side by
+		// side (each under its own viewport) don't load blocks for each other's viewers. 0 pairs with any terrain.
+		uint64_t world_id = 0;
 	};
 
 	static constexpr unsigned int DEFAULT_MAIN_THREAD_BUDGET_USEC = 8000;
@@ -189,6 +192,7 @@ public:
 	void set_viewer_requires_data_block_notifications(ViewerID viewer_id, bool enabled);
 	bool is_viewer_requiring_data_block_notifications(ViewerID viewer_id) const;
 	void set_viewer_network_peer_id(ViewerID viewer_id, int peer_id);
+	void set_viewer_world_id(ViewerID viewer_id, uint64_t world_id);
 	int get_viewer_network_peer_id(ViewerID viewer_id) const;
 	bool viewer_exists(ViewerID viewer_id) const;
 	void sync_viewers_task_priority_data();

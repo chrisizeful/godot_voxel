@@ -1436,8 +1436,13 @@ void VoxelTerrain::process_viewers() {
 			const Box3i bounds_in_mesh_blocks;
 			const Transform3D world_to_local_transform;
 			const float view_distance_scale;
+			const uint64_t world_id;
 
 			inline void operator()(ViewerID viewer_id, const VoxelEngine::Viewer &viewer) {
+				// A viewer in another world is left unpaired, as if it had gone.
+				if (viewer.world_id != 0 && world_id != 0 && viewer.world_id != world_id) {
+					return;
+				}
 				size_t paired_viewer_index;
 				if (!self.try_get_paired_viewer_index(viewer_id, paired_viewer_index)) {
 					// New viewer
@@ -1524,9 +1529,13 @@ void VoxelTerrain::process_viewers() {
 		};
 
 		// New viewers and updates. Removed viewers won't be iterated but are still paired until later.
-		UpdatePairedViewer u{
-			*this, bounds_in_data_blocks, bounds_in_mesh_blocks, world_to_local_transform, view_distance_scale
-		};
+		const Ref<World3D> world = get_world_3d();
+		UpdatePairedViewer u{ *this,
+							  bounds_in_data_blocks,
+							  bounds_in_mesh_blocks,
+							  world_to_local_transform,
+							  view_distance_scale,
+							  world.is_valid() ? uint64_t(world->get_instance_id()) : 0 };
 		VoxelEngine::get_singleton().for_each_viewer(u);
 	}
 
