@@ -575,6 +575,12 @@ Ref<NavigationMeshSourceGeometryData3D> TiledNavigation3D::get_fixed_geometry() 
 	return _static_geometry.is_valid() ? _static_geometry : _parsed_geometry;
 }
 
+// Groups span the whole tree: an obstacle counts only in the World3D this node is in, so worlds side by side (each under
+// its own viewport) don't carve each other's navmeshes.
+bool TiledNavigation3D::is_in_own_world(const Node3D &node) const {
+	return node.is_inside_tree() && node.get_world_3d() == get_world_3d();
+}
+
 // Parses source_geometry_root once, as the template says to; obstacles this node carves are switched off meanwhile, so
 // someone sitting down at load isn't baked in for good.
 void TiledNavigation3D::parse_source_geometry() {
@@ -588,7 +594,7 @@ void TiledNavigation3D::parse_source_geometry() {
 		const TypedArray<Node> nodes = get_tree()->get_nodes_in_group(_obstacle_group);
 		for (int i = 0; i < nodes.size(); ++i) {
 			NavigationObstacle3D *node = Object::cast_to<NavigationObstacle3D>(nodes[i]);
-			if (node != nullptr && node->get_affect_navigation_mesh()) {
+			if (node != nullptr && node->get_affect_navigation_mesh() && is_in_own_world(*node)) {
 				node->set_affect_navigation_mesh(false);
 				carving.push_back(node);
 			}
@@ -731,7 +737,7 @@ void TiledNavigation3D::update_obstacles() {
 		const TypedArray<Node> nodes = get_tree()->get_nodes_in_group(_obstacle_group);
 		for (int i = 0; i < nodes.size(); ++i) {
 			const NavigationObstacle3D *node = Object::cast_to<NavigationObstacle3D>(nodes[i]);
-			if (node == nullptr || !node->get_affect_navigation_mesh() || !node->is_inside_tree()) {
+			if (node == nullptr || !node->get_affect_navigation_mesh() || !is_in_own_world(*node)) {
 				continue;
 			}
 			const Vector3 pos = node->get_global_position();

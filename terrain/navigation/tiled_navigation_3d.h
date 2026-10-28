@@ -202,6 +202,7 @@ private:
 	void parse_source_geometry();
 	Ref<NavigationMeshSourceGeometryData3D> get_fixed_geometry() const;
 	void update_obstacles();
+	bool is_in_own_world(const Node3D &node) const;
 	Tile &get_or_create_tile(Vector2i tile_pos);
 	void mark_dirty(Tile &tile);
 	AABB get_tile_bounds(Vector2i tile_pos) const;
