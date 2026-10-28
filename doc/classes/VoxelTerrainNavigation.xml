@@ -4,7 +4,7 @@
 		A [TiledNavigation3D] that also follows the [VoxelTerrain] it's a child of.
 	</brief_description>
 	<description>
-		Add as a child of a [VoxelTerrain]. Tiles are columns of [member tile_size_blocks] mesh blocks (so [member TiledNavigation3D.tile_size] isn't used), on the terrain's grid, and bake the terrain's own triangles along with the fixed geometry. When voxels change (edited, or streamed in or out) only the tiles they reach are rebaked: an edit reports the box it touched, so one inside a tile leaves its neighbours alone.
+		Add as a child of a [VoxelTerrain]. Tiles are columns of [member tile_size_blocks] mesh blocks (so [member TiledNavigation3D.tile_size] isn't used), on the terrain's grid, and bake the terrain's own triangles along with the fixed geometry. When voxels change (edited, or streamed in) only the tiles they reach are rebaked; a block streaming out leaves its tiles as they were, since its voxels haven't changed: an edit reports the box it touched, so one inside a tile leaves its neighbours alone.
 		Walkable parts of the fixed geometry that voxels now bury are dropped (see [member drop_buried_static_geometry]), so filling a road in takes it off the navmesh and digging it out puts it back.
 		The terrain's [code]bounds[/code] set the tiles' vertical extent, together with the fixed geometry's. Only a translation and uniform scale on the terrain are supported.
 	</description>

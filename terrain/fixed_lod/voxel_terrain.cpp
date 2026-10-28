@@ -555,10 +555,8 @@ void VoxelTerrain::unload_mesh_block(Vector3i bpos) {
 	if (was_loaded) {
 		emit_mesh_block_exited(bpos);
 	}
-	if (_record_mesh_changes) {
-		const int block_size = get_mesh_block_size();
-		_mesh_changes.push_back({ bpos, Box3i(bpos * block_size, Vector3i(block_size, block_size, block_size)) });
-	}
+	// Not a mesh change: the voxels are as they were, so what was built from them (a navmesh tile) still holds. The
+	// block is recorded again when it meshes back in.
 }
 
 void VoxelTerrain::save_all_modified_blocks(bool with_copy, std::shared_ptr<AsyncDependencyTracker> tracker) {
