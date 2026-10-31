@@ -9,6 +9,7 @@
 #include "../streams/voxel_stream.h"
 #include "../util/godot/classes/geometry_instance_3d.h"
 #include "../util/godot/classes/node_3d.h"
+#include "../util/math/box3i.h"
 
 #ifdef TOOLS_ENABLED
 #include "../util/godot/core/version.h"
@@ -54,6 +55,9 @@ public:
 	virtual std::shared_ptr<StreamingDependency> get_streaming_dependency() const;
 
 	virtual Ref<VoxelTool> get_voxel_tool();
+
+	// Called after modifiers changed in an area, so the volume updates what was generated there.
+	virtual void post_edit_modifiers(Box3i p_voxel_box) {}
 
 	enum NodeConversionFlags {
 		NODE_CONVERSION_INCLUDE_INSTANCER = 1 << 0,

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VoxelModifierSculpt" inherits="VoxelModifier" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Voxel modifier holding hand-sculpted changes.
+	</brief_description>
+	<description>
+		Applies a [VoxelSculptData] over what lies below it: the generator and the modifiers before it. Modifiers after it apply over the sculpt. An editor brush or a script sculpts it with [method sculpt_sphere]; the data is in the volume's own voxel grid, so the node's transform doesn't move it, and it ignores [member VoxelModifier.operation], [member VoxelModifier.smoothness] and [member VoxelModifier.material].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="sculpt_sphere">
+			<return type="void" />
+			<param index="0" name="center" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="mode" type="int" enum="VoxelModifierSculpt.BrushMode" />
+			<param index="3" name="strength" type="float" />
+			<param index="4" name="material" type="int" />
+			<description>
+				Sculpts a sphere at [param center], in the volume's local voxel space, of [param radius] voxels. [param strength] (0 to 1) blends the step. [param material] is used by [constant BRUSH_PAINT] (-1 clears it).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="data" type="VoxelSculptData" setter="set_data" getter="get_data">
+			The sculpted changes. Changing its chunks from outside (undo) updates the volume.
+		</member>
+	</members>
+	<constants>
+		<constant name="BRUSH_ADD" value="0" enum="BrushMode">
+			Adds a sphere, taking back what was cut there.
+		</constant>
+		<constant name="BRUSH_REMOVE" value="1" enum="BrushMode">
+			Cuts a sphere away, taking back what was added there.
+		</constant>
+		<constant name="BRUSH_SMOOTH" value="2" enum="BrushMode">
+			Blurs the surface inside the sphere.
+		</constant>
+		<constant name="BRUSH_PAINT" value="3" enum="BrushMode">
+			Sets the material inside the sphere.
+		</constant>
+		<constant name="BRUSH_ERASE" value="4" enum="BrushMode">
+			Takes the sculpt back towards what lies below.
+		</constant>
+		<constant name="BRUSH_MODE_COUNT" value="5" enum="BrushMode">
+		</constant>
+	</constants>
+</class>

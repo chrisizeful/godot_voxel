@@ -174,6 +174,11 @@ public:
 	// TODO Rename `clear_cached_voxel_data_in_area`
 	void clear_cached_blocks_in_voxel_area(Box3i p_voxel_box);
 
+	// Regenerates, from the generator and modifiers, LOD0 blocks in the area that are pure results of them and have
+	// voxels, so a terrain that needs every loaded block to have voxels keeps them (VoxelTerrain).
+	// WARNING: this does not check if the area is editable.
+	void regenerate_cached_blocks_in_voxel_area(Box3i p_voxel_box);
+
 	// Flags all blocks in the given area as modified at LOD0.
 	// Also marks them as requiring LOD updates (if lod count is 1 this has no effect).
 	// Optionally, returns a list of affected block positions which did not require LOD updates before.

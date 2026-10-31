@@ -908,6 +908,19 @@ void VoxelTerrain::try_schedule_mesh_update_from_data(const Box3i &box_in_voxels
 	});
 }
 
+void VoxelTerrain::post_edit_modifiers(Box3i p_voxel_box) {
+	p_voxel_box.clip(_data->get_bounds());
+	// Blocks loaded here keep their voxels, so the ones that are only generated are made again in place.
+	_data->regenerate_cached_blocks_in_voxel_area(p_voxel_box);
+	try_schedule_mesh_update_from_data(p_voxel_box);
+
+#ifdef VOXEL_ENABLE_INSTANCER
+	if (_instancer != nullptr) {
+		_instancer->on_area_edited(p_voxel_box);
+	}
+#endif
+}
+
 void VoxelTerrain::post_edit_area(Box3i box_in_voxels, bool update_mesh) {
 	_data->mark_area_modified(box_in_voxels, nullptr, false);
 

@@ -4,13 +4,17 @@
 		Base class for voxel modifiers.
 	</brief_description>
 	<description>
-		Modifiers are meant to be as an extension to terrain's generator that non-destructively affect limited volume. Stacks with other modifiers. Runtime edits from [VoxelTool] override modifier values.
-		Note 1: Only works with [VoxelLodTerrain].
+		Modifiers are meant to be as an extension to terrain's generator that non-destructively affect limited volume. Stacks with other modifiers, in the order of their nodes under the volume. Runtime edits from [VoxelTool] override modifier values.
+		Note 1: Works with [VoxelLodTerrain] and [VoxelTerrain]. Under a [VoxelTerrain], moving or changing one makes again the loaded blocks it covers that weren't edited.
 		Note 2: Only works with smooth terrain (SDF).
+		Note 3: Paint, materials, [VoxelModifierPath] and [VoxelModifierSculpt] are left out of GPU generation.
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
+		<member name="material" type="int" setter="set_material" getter="get_material" default="-1">
+			Material index written into [constant VoxelBuffer.CHANNEL_INDICES] inside the shape when adding or painting. -1 leaves the material as it is.
+		</member>
 		<member name="operation" type="int" setter="set_operation" getter="get_operation" enum="VoxelModifier.Operation" default="0">
 			An operation that the modifier performs on the terrain or on the other modifiers.
 		</member>
@@ -25,6 +29,9 @@
 		</constant>
 		<constant name="OPERATION_REMOVE" value="1" enum="Operation">
 			Performs SDF subtraction.
+		</constant>
+		<constant name="OPERATION_PAINT" value="2" enum="Operation">
+			Leaves the SDF as it is, and only writes [member material] inside the shape.
 		</constant>
 	</constants>
 </class>

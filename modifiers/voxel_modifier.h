@@ -16,13 +16,16 @@ namespace zylann::voxel {
 struct VoxelModifierContext {
 	Span<float> sdf; // Signed distance values to modify
 	Span<const Vector3f> positions; // Positions associated to each signed distance
+	// Material index (CHANNEL_INDICES) associated to each signed distance, for modifiers that write one; empty
+	// otherwise, or when only the distance is queried.
+	Span<uint8_t> material;
 };
 
 struct BaseGPUResources;
 
 class VoxelModifier {
 public:
-	enum Type { TYPE_SPHERE, TYPE_MESH };
+	enum Type { TYPE_SPHERE, TYPE_MESH, TYPE_PATH, TYPE_SCULPT };
 
 	virtual ~VoxelModifier() {}
 
@@ -41,7 +44,25 @@ public:
 	virtual Type get_type() const = 0;
 	virtual bool is_sdf() const = 0;
 
+	// Whether apply() writes the context's material, so the stack provides it.
+	virtual bool writes_material() const {
+		return false;
+	}
+
+	// Modifiers apply in increasing order (their node's index under the volume).
+	inline int64_t get_order() const {
+		return _order;
+	}
+	inline void set_order(int64_t order) {
+		_order = order;
+	}
+
 #ifdef VOXEL_ENABLE_GPU
+	// Modifiers without a compute shader are left out of GPU generation.
+	virtual bool supports_gpu() const {
+		return true;
+	}
+
 	struct ShaderData {
 		VoxelModifier::Type modifier_type;
 		std::shared_ptr<ComputeShaderParameters> params;
@@ -66,6 +87,7 @@ protected:
 
 private:
 	Transform3D _transform;
+	int64_t _order = 0;
 };
 
 } // namespace zylann::voxel

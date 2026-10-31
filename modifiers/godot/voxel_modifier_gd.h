@@ -2,7 +2,7 @@
 #define VOXEL_MODIFIER_GD_H
 
 #include "../../storage/voxel_data.h"
-#include "../../terrain/variable_lod/voxel_lod_terrain.h"
+#include "../../terrain/voxel_node.h"
 #include "../../util/godot/classes/node_3d.h"
 #include "../voxel_modifier.h"
 
@@ -18,6 +18,7 @@ public:
 	enum Operation { //
 		OPERATION_ADD,
 		OPERATION_REMOVE,
+		OPERATION_PAINT,
 		OPERATION_COUNT
 	};
 
@@ -28,6 +29,9 @@ public:
 
 	void set_smoothness(float s);
 	float get_smoothness() const;
+
+	void set_material(int material);
+	int get_material() const;
 
 #ifdef TOOLS_ENABLED
 #if defined(ZN_GODOT)
@@ -41,8 +45,9 @@ public:
 protected:
 	virtual zylann::voxel::VoxelModifier *create(zylann::voxel::VoxelModifierStack &modifiers, uint32_t id);
 	void _notification(int p_what);
+	void on_volume_child_order_changed();
 
-	VoxelLodTerrain *_volume = nullptr;
+	VoxelNode *_volume = nullptr;
 	uint32_t _modifier_id = 0;
 
 private:
@@ -50,14 +55,15 @@ private:
 
 	Operation _operation = OPERATION_ADD;
 	float _smoothness = 0.f;
+	int _material = -1;
 };
 
 // Helpers
 
-void post_edit_modifier(VoxelLodTerrain &volume, AABB aabb);
+void post_edit_modifier(VoxelNode &volume, AABB aabb);
 
 template <typename T>
-T *get_modifier(VoxelLodTerrain &volume, uint32_t id, zylann::voxel::VoxelModifier::Type type) {
+T *get_modifier(VoxelNode &volume, uint32_t id, zylann::voxel::VoxelModifier::Type type) {
 	VoxelData &data = volume.get_storage();
 	VoxelModifierStack &modifiers = data.get_modifiers();
 	zylann::voxel::VoxelModifier *modifier = modifiers.get_modifier(id);

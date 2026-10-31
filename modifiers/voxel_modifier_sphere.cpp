@@ -33,30 +33,10 @@ void VoxelModifierSphere::update_aabb() {
 void VoxelModifierSphere::apply(VoxelModifierContext ctx) const {
 	ZN_PROFILE_SCOPE();
 	RWLockRead rlock(_rwlock);
-	const float smoothness = get_smoothness();
 	const Vector3f center = to_vec3f(get_transform().origin);
-	const float sdf_scale = 1.0f;
-
+	const float radius = _radius;
 	// TODO Support transform scale
-
-	switch (get_operation()) {
-		case OP_ADD:
-			for (unsigned int i = 0; i < ctx.sdf.size(); ++i) {
-				const float sd = sdf_scale * math::sdf_sphere(ctx.positions[i], center, _radius);
-				ctx.sdf[i] = math::sdf_smooth_union(ctx.sdf[i], sd, smoothness);
-			}
-			break;
-
-		case OP_SUBTRACT:
-			for (unsigned int i = 0; i < ctx.sdf.size(); ++i) {
-				const float sd = sdf_scale * math::sdf_sphere(ctx.positions[i], center, _radius);
-				ctx.sdf[i] = math::sdf_smooth_subtract(ctx.sdf[i], sd, smoothness);
-			}
-			break;
-
-		default:
-			ZN_CRASH();
-	}
+	apply_shape(ctx, [center, radius](const Vector3f pos) { return math::sdf_sphere(pos, center, radius); });
 }
 
 #ifdef VOXEL_ENABLE_GPU

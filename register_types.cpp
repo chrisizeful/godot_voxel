@@ -64,6 +64,9 @@
 #include "modifiers/godot/voxel_modifier_gd.h"
 #include "modifiers/godot/voxel_modifier_mesh_gd.h"
 #include "modifiers/godot/voxel_modifier_sphere_gd.h"
+#include "modifiers/godot/voxel_modifier_path_gd.h"
+#include "modifiers/godot/voxel_modifier_sculpt_gd.h"
+#include "modifiers/voxel_sculpt_data.h"
 #endif
 
 #ifdef VOXEL_ENABLE_SQLITE
@@ -344,6 +347,9 @@ void initialize_voxel_module(ModuleInitializationLevel p_level) {
 		ClassDB::register_abstract_class<zylann::voxel::godot::VoxelModifier>();
 		ClassDB::register_class<zylann::voxel::godot::VoxelModifierSphere>();
 		ClassDB::register_class<zylann::voxel::godot::VoxelModifierMesh>();
+		ClassDB::register_class<zylann::voxel::godot::VoxelModifierPath>();
+		ClassDB::register_class<zylann::voxel::godot::VoxelModifierSculpt>();
+		ClassDB::register_class<zylann::voxel::VoxelSculptData>();
 		ClassDB::register_class<TiledNavigation3D>();
 		ClassDB::register_class<VoxelTerrainNavigation>();
 #endif

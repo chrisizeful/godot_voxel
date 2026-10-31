@@ -1,4 +1,5 @@
 #include "voxel_modifier_gd.h"
+#include "../../util/godot/core/callable_mp.h"
 #include "../../util/godot/core/array.h"
 #include "../../util/io/log.h"
 #include "../../util/math/conv.h"
@@ -24,7 +25,7 @@ zylann::voxel::VoxelModifierSdf::Operation to_op(VoxelModifier::Operation op) {
 	return zylann::voxel::VoxelModifierSdf::Operation(op);
 }
 
-void post_edit_modifier(VoxelLodTerrain &volume, AABB aabb) {
+void post_edit_modifier(VoxelNode &volume, AABB aabb) {
 	volume.post_edit_modifiers(Box3i(math::floor_to_int(aabb.position), math::floor_to_int(aabb.size)));
 }
 
@@ -76,13 +77,49 @@ float VoxelModifier::get_smoothness() const {
 	return _smoothness;
 }
 
+void VoxelModifier::set_material(int material) {
+	material = math::clamp(material, -1, 255);
+	if (material == _material) {
+		return;
+	}
+	_material = material;
+	if (_volume == nullptr) {
+		return;
+	}
+	VoxelData &voxel_data = _volume->get_storage();
+	VoxelModifierStack &modifiers = voxel_data.get_modifiers();
+	zylann::voxel::VoxelModifier *modifier = modifiers.get_modifier(_modifier_id);
+	ZN_ASSERT_RETURN(modifier != nullptr);
+	ZN_ASSERT_RETURN(modifier->is_sdf());
+	static_cast<zylann::voxel::VoxelModifierSdf *>(modifier)->set_material(_material);
+	post_edit_modifier(*_volume, modifier->get_aabb());
+}
+
+int VoxelModifier::get_material() const {
+	return _material;
+}
+
+// Modifiers apply in their nodes' order under the volume.
+void VoxelModifier::on_volume_child_order_changed() {
+	if (_volume == nullptr || !is_inside_tree()) {
+		return;
+	}
+	VoxelModifierStack &modifiers = _volume->get_storage().get_modifiers();
+	zylann::voxel::VoxelModifier *modifier = modifiers.get_modifier(_modifier_id);
+	ZN_ASSERT_RETURN(modifier != nullptr);
+	if (modifier->get_order() != get_index()) {
+		modifiers.set_modifier_order(_modifier_id, get_index());
+		post_edit_modifier(*_volume, modifier->get_aabb());
+	}
+}
+
 void VoxelModifier::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_PARENTED: {
 			Node *parent = get_parent();
 			ZN_ASSERT_RETURN(parent != nullptr);
 			ZN_ASSERT_RETURN(_volume == nullptr);
-			VoxelLodTerrain *volume = Object::cast_to<VoxelLodTerrain>(parent);
+			VoxelNode *volume = Object::cast_to<VoxelNode>(parent);
 			_volume = volume;
 
 			if (_volume != nullptr) {
@@ -96,10 +133,13 @@ void VoxelModifier::_notification(int p_what) {
 							static_cast<zylann::voxel::VoxelModifierSdf *>(modifier);
 					sdf_modifier->set_operation(to_op(_operation));
 					sdf_modifier->set_smoothness(_smoothness);
+					sdf_modifier->set_material(_material);
 				}
 
 				modifier->set_transform(get_transform());
 				_modifier_id = id;
+				modifiers.set_modifier_order(id, get_index());
+				parent->connect("child_order_changed", callable_mp(this, &VoxelModifier::on_volume_child_order_changed));
 				// TODO Optimize: on loading of a scene, this could be very bad for performance because there could be,
 				// a lot of modifiers on the map, but there is no distinction possible in Godot at the moment...
 				post_edit_modifier(*_volume, modifier->get_aabb());
@@ -110,6 +150,10 @@ void VoxelModifier::_notification(int p_what) {
 
 		case NOTIFICATION_UNPARENTED: {
 			if (_volume != nullptr) {
+				const Callable order_changed = callable_mp(this, &VoxelModifier::on_volume_child_order_changed);
+				if (_volume->is_connected("child_order_changed", order_changed)) {
+					_volume->disconnect("child_order_changed", order_changed);
+				}
 				VoxelData &voxel_data = _volume->get_storage();
 				VoxelModifierStack &modifiers = voxel_data.get_modifiers();
 				zylann::voxel::VoxelModifier *modifier = modifiers.get_modifier(_modifier_id);
@@ -162,7 +206,7 @@ PackedStringArray VoxelModifier::_get_configuration_warnings() const {
 void VoxelModifier::get_configuration_warnings(PackedStringArray &warnings) const {
 	if (_volume == nullptr) {
 		warnings.append(ZN_TTR("The parent of this node must be of type {0}.")
-								.format(varray(VoxelLodTerrain::get_class_static())));
+								.format(varray(VoxelNode::get_class_static())));
 	}
 }
 
@@ -175,17 +219,25 @@ void VoxelModifier::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_smoothness", "smoothness"), &VoxelModifier::set_smoothness);
 	ClassDB::bind_method(D_METHOD("get_smoothness"), &VoxelModifier::get_smoothness);
 
+	ClassDB::bind_method(D_METHOD("set_material", "material"), &VoxelModifier::set_material);
+	ClassDB::bind_method(D_METHOD("get_material"), &VoxelModifier::get_material);
+
 	ADD_PROPERTY(
-			PropertyInfo(Variant::INT, "operation", PROPERTY_HINT_ENUM, "Add,Remove"), "set_operation", "get_operation"
+			PropertyInfo(Variant::INT, "operation", PROPERTY_HINT_ENUM, "Add,Remove,Paint"), "set_operation", "get_operation"
 	);
 	ADD_PROPERTY(
 			PropertyInfo(Variant::FLOAT, "smoothness", PROPERTY_HINT_RANGE, "0.0, 100.0, 0.1"),
 			"set_smoothness",
 			"get_smoothness"
 	);
+	// Material index (CHANNEL_INDICES) written inside the shape when adding or painting; -1 leaves it.
+	ADD_PROPERTY(
+			PropertyInfo(Variant::INT, "material", PROPERTY_HINT_RANGE, "-1,255,1"), "set_material", "get_material"
+	);
 
 	BIND_ENUM_CONSTANT(OPERATION_ADD);
 	BIND_ENUM_CONSTANT(OPERATION_REMOVE);
+	BIND_ENUM_CONSTANT(OPERATION_PAINT);
 }
 
 } // namespace zylann::voxel::godot

@@ -69,6 +69,7 @@ public:
 
 	void post_edit_voxel(Vector3i pos);
 	void post_edit_area(Box3i box_in_voxels, bool update_mesh);
+	void post_edit_modifiers(Box3i p_voxel_box) override;
 
 	void set_generate_collisions(bool enabled);
 	bool get_generate_collisions() const {

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VoxelModifierPath" inherits="VoxelModifier" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Voxel modifier that sweeps a rounded box along a polyline.
+	</brief_description>
+	<description>
+		Its cross-section spans [member width] across the path, and from [member bottom] to [member top] along its up (Y, kept level whatever the path's slope), with edges rounded by [member rounding]. Useful for a road's bed, a trench or a tunnel.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="bottom" type="float" setter="set_bottom" getter="get_bottom" default="-1.0">
+			Bottom of the cross-section, relative to the path.
+		</member>
+		<member name="points" type="PackedVector3Array" setter="set_points" getter="get_points" default="PackedVector3Array()">
+			The path, in the modifier's local space.
+		</member>
+		<member name="rounding" type="float" setter="set_rounding" getter="get_rounding" default="0.25">
+			Radius the cross-section's edges are rounded by.
+		</member>
+		<member name="top" type="float" setter="set_top" getter="get_top" default="0.0">
+			Top of the cross-section, relative to the path.
+		</member>
+		<member name="width" type="float" setter="set_width" getter="get_width" default="4.0">
+			Full width of the cross-section.
+		</member>
+	</members>
+</class>

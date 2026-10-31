@@ -12,6 +12,11 @@ void VoxelModifierSdf::set_operation(Operation op) {
 #endif
 }
 
+void VoxelModifierSdf::set_material(int material) {
+	RWLockWrite wlock(_rwlock);
+	_material = math::clamp(material, -1, 255);
+}
+
 void VoxelModifierSdf::set_smoothness(float p_smoothness) {
 	RWLockWrite wlock(_rwlock);
 	const float smoothness = math::max(p_smoothness, 0.f);

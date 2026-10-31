@@ -770,6 +770,36 @@ void VoxelData::clear_cached_blocks_in_voxel_area(Box3i p_voxel_box) {
 	}
 }
 
+void VoxelData::regenerate_cached_blocks_in_voxel_area(Box3i p_voxel_box) {
+	const Ref<VoxelGenerator> generator = get_generator();
+	Lod &lod = _lods[0];
+	const int block_size = lod.map.get_block_size();
+	const Box3i blocks_box = p_voxel_box.downscaled(block_size);
+
+	// Locking area for write because we replace blocks' voxels
+	SpatialLock3D::Write swlock(lod.spatial_lock, blocks_box);
+	// Locking map for read because we won't add or remove blocks
+	RWLockRead rlock(lod.map_lock);
+
+	blocks_box.for_each_cell_zxy([this, &lod, &generator, block_size](const Vector3i bpos) {
+		VoxelDataBlock *block = lod.map.get_block(bpos);
+		if (block == nullptr || !block->has_voxels() || block->is_edited() || block->is_modified()) {
+			return;
+		}
+		std::shared_ptr<VoxelBuffer> voxels = make_shared_instance<VoxelBuffer>(VoxelBuffer::ALLOCATOR_POOL);
+		voxels->copy_format(block->get_voxels_const());
+		voxels->create(block->get_voxels_const().get_size());
+		VoxelGenerator::VoxelQueryData q{ *voxels, bpos * block_size, 0 };
+		if (generator.is_valid()) {
+			generator->generate_block(q);
+		}
+#ifdef VOXEL_ENABLE_MODIFIERS
+		_modifiers.apply(*voxels, AABB(q.origin_in_voxels, voxels->get_size()));
+#endif
+		block->set_voxels(voxels);
+	});
+}
+
 void VoxelData::mark_area_modified(
 		Box3i p_voxel_box,
 		StdVector<Vector3i> *lod0_new_blocks_to_lod,

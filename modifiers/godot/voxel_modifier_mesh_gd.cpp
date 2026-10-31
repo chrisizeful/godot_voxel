@@ -9,7 +9,7 @@
 
 namespace zylann::voxel::godot {
 
-zylann::voxel::VoxelModifierMesh *get_mesh_modifier(VoxelLodTerrain &volume, uint32_t id) {
+zylann::voxel::VoxelModifierMesh *get_mesh_modifier(VoxelNode &volume, uint32_t id) {
 	return get_modifier<zylann::voxel::VoxelModifierMesh>(volume, id, zylann::voxel::VoxelModifier::TYPE_MESH);
 }
 

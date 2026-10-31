@@ -3,7 +3,7 @@
 
 namespace zylann::voxel::godot {
 
-zylann::voxel::VoxelModifierSphere *get_sphere(VoxelLodTerrain &volume, uint32_t id) {
+zylann::voxel::VoxelModifierSphere *get_sphere(VoxelNode &volume, uint32_t id) {
 	return get_modifier<zylann::voxel::VoxelModifierSphere>(volume, id, zylann::voxel::VoxelModifier::TYPE_SPHERE);
 }
 

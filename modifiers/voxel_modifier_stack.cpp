@@ -1,4 +1,5 @@
 #include "voxel_modifier_stack.h"
+#include <algorithm>
 #include "../edition/funcs.h"
 #include "../util/dstack.h"
 #include "../util/math/vector3.h"
@@ -158,6 +159,16 @@ void VoxelModifierStack::remove_modifier(uint32_t id) {
 	_modifiers.erase(map_it);
 }
 
+void VoxelModifierStack::set_modifier_order(uint32_t id, int64_t order) {
+	RWLockWrite lock(_stack_lock);
+	auto map_it = _modifiers.find(id);
+	ZN_ASSERT_RETURN(map_it != _modifiers.end());
+	map_it->second->set_order(order);
+	std::stable_sort(_stack.begin(), _stack.end(), [](const VoxelModifier *a, const VoxelModifier *b) {
+		return a->get_order() < b->get_order();
+	});
+}
+
 bool VoxelModifierStack::has_modifier(uint32_t id) const {
 	return _modifiers.find(id) != _modifiers.end();
 }
@@ -170,7 +181,7 @@ VoxelModifier *VoxelModifierStack::get_modifier(uint32_t id) const {
 	return nullptr;
 }
 
-void VoxelModifierStack::apply(VoxelBuffer &voxels, AABB aabb) const {
+void VoxelModifierStack::apply(VoxelBuffer &voxels, AABB aabb, int64_t before_order) const {
 	ZN_PROFILE_SCOPE();
 	RWLockRead lock(_stack_lock);
 
@@ -192,6 +203,7 @@ void VoxelModifierStack::apply(VoxelBuffer &voxels, AABB aabb) const {
 	thread_local StdVector<float> tls_block_sdf_initial;
 	thread_local StdVector<float> tls_block_sdf;
 
+	thread_local StdVector<uint8_t> tls_area_material;
 	StdVector<float> &area_sdf = get_tls_sdf();
 	StdVector<Vector3f> &area_positions = get_tls_positions();
 
@@ -202,6 +214,9 @@ void VoxelModifierStack::apply(VoxelBuffer &voxels, AABB aabb) const {
 	for (unsigned int i = 0; i < _stack.size(); ++i) {
 		const VoxelModifier *modifier = _stack[i];
 		ZN_ASSERT(modifier != nullptr);
+		if (modifier->get_order() >= before_order) {
+			break;
+		}
 
 		const AABB modifier_aabb = modifier->get_aabb();
 		if (modifier_aabb.intersects(aabb)) {
@@ -243,7 +258,38 @@ void VoxelModifierStack::apply(VoxelBuffer &voxels, AABB aabb) const {
 
 			ctx.positions = to_span(area_positions);
 			ctx.sdf = to_span(area_sdf);
+
+			const bool material = modifier->writes_material();
+			if (material) {
+				// Same order as the positions (ZXY).
+				tls_area_material.resize(volume);
+				unsigned int mi = 0;
+				for (int z = 0; z < modifier_box.size.z; ++z) {
+					for (int x = 0; x < modifier_box.size.x; ++x) {
+						for (int y = 0; y < modifier_box.size.y; ++y) {
+							const Vector3i p = local_origin_in_voxels + Vector3i(x, y, z);
+							tls_area_material[mi++] = voxels.get_voxel(p.x, p.y, p.z, VoxelBuffer::CHANNEL_INDICES);
+						}
+					}
+				}
+				ctx.material = to_span(tls_area_material);
+			} else {
+				ctx.material = Span<uint8_t>();
+			}
+
 			modifier->apply(ctx);
+
+			if (material) {
+				unsigned int mi = 0;
+				for (int z = 0; z < modifier_box.size.z; ++z) {
+					for (int x = 0; x < modifier_box.size.x; ++x) {
+						for (int y = 0; y < modifier_box.size.y; ++y) {
+							const Vector3i p = local_origin_in_voxels + Vector3i(x, y, z);
+							voxels.set_voxel(tls_area_material[mi++], p.x, p.y, p.z, VoxelBuffer::CHANNEL_INDICES);
+						}
+					}
+				}
+			}
 
 			// Write modifications back to the full-block decompressed buffer
 			// TODO Maybe use an unchecked version for a bit more speed?
@@ -338,7 +384,7 @@ void VoxelModifierStack::apply_for_gpu_rendering(
 		VoxelModifier *modifier = _stack[i];
 		ZN_ASSERT(modifier != nullptr);
 
-		if (modifier->get_aabb().intersects(aabb)) {
+		if (modifier->supports_gpu() && modifier->get_aabb().intersects(aabb)) {
 			VoxelModifier::ShaderData sd;
 			modifier->get_shader_data(sd);
 			out_data.push_back(sd);

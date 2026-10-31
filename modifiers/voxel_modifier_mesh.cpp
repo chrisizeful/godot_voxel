@@ -52,7 +52,6 @@ void VoxelModifierMesh::apply(VoxelModifierContext ctx) const {
 
 	Span<const float> buffer_sdf;
 	ZN_ASSERT_RETURN(buffer.get_channel_data_read_only(VoxelBuffer::CHANNEL_SDF, buffer_sdf));
-	const float smoothness = get_smoothness();
 
 	ops::SdfBufferShape shape;
 	shape.buffer = buffer_sdf;
@@ -61,24 +60,7 @@ void VoxelModifierMesh::apply(VoxelModifierContext ctx) const {
 	shape.sdf_scale = math::get_largest_coord(model_to_world.get_basis().get_scale());
 	shape.world_to_buffer = buffer_to_world.affine_inverse();
 
-	switch (get_operation()) {
-		case OP_ADD:
-			for (unsigned int i = 0; i < ctx.sdf.size(); ++i) {
-				const float sd = shape(ctx.positions[i]);
-				ctx.sdf[i] = math::sdf_smooth_union(ctx.sdf[i], sd, smoothness);
-			}
-			break;
-
-		case OP_SUBTRACT:
-			for (unsigned int i = 0; i < ctx.sdf.size(); ++i) {
-				const float sd = shape(ctx.positions[i]);
-				ctx.sdf[i] = math::sdf_smooth_subtract(ctx.sdf[i], sd, smoothness);
-			}
-			break;
-
-		default:
-			ZN_CRASH();
-	}
+	apply_shape(ctx, [&shape](const Vector3f pos) { return shape(pos); });
 }
 
 void VoxelModifierMesh::update_aabb() {

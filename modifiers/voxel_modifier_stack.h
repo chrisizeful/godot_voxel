@@ -6,6 +6,7 @@
 #include "../util/math/vector3f.h"
 #include "../util/memory/memory.h"
 #include "voxel_modifier.h"
+#include <cstdint>
 
 namespace zylann::voxel {
 
@@ -32,9 +33,12 @@ public:
 	}
 
 	void remove_modifier(uint32_t id);
+	// Sets the order the modifier applies in among the others (lower first), keeping the stack sorted.
+	void set_modifier_order(uint32_t id, int64_t order);
 	bool has_modifier(uint32_t id) const;
 	VoxelModifier *get_modifier(uint32_t id) const;
-	void apply(VoxelBuffer &voxels, AABB aabb) const;
+	// Applies the modifiers ordered before `before_order` (all of them by default).
+	void apply(VoxelBuffer &voxels, AABB aabb, int64_t before_order = INT64_MAX) const;
 	void apply(float &sdf, Vector3f position) const;
 
 	void apply(

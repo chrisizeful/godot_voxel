@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VoxelSculptData" inherits="Resource" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Hand-sculpted changes for a [VoxelModifierSculpt].
+	</brief_description>
+	<description>
+		In chunks of 16 cubed voxels: a shape added and one cut away from what lies below, a small offset (smoothing), and a material. Saved uncompressed, one byte array per chunk.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_chunk_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Number of chunks holding changes.
+			</description>
+		</method>
+		<method name="get_chunks_in_box" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="min_voxel" type="Vector3i" />
+			<param index="1" name="max_voxel" type="Vector3i" />
+			<description>
+				The chunks covering the box, by chunk position; a chunk with no changes is an empty array. Pass it back to [method set_chunks] to undo.
+			</description>
+		</method>
+		<method name="set_chunks">
+			<return type="void" />
+			<param index="0" name="chunks" type="Dictionary" />
+			<description>
+				Replaces the given chunks (as [method get_chunks_in_box] returns them); an empty array removes one.
+			</description>
+		</method>
+	</methods>
+</class>
