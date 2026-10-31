@@ -461,7 +461,7 @@ Ref<VoxelRaycastResult> raycast_generic_world(
 
 	if (res.is_valid()) {
 		const float max_distance_world_sq = ray_origin_world.distance_squared_to(ray_end_world);
-		const float to_world_scale = max_distance_world_sq / max_distance_local_sq;
+		const float to_world_scale = Math::sqrt(max_distance_world_sq / max_distance_local_sq);
 
 		res->distance_along_ray = res->distance_along_ray * to_world_scale;
 
