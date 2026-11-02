@@ -87,6 +87,13 @@
 				Useful when something must wait for colliders to catch up with an edit, for example a body spawned where voxels were just removed (see [method VoxelTool.detach_floating_islands]).
 			</description>
 		</method>
+		<method name="set_collision_urgent">
+			<return type="void" />
+			<param index="0" name="area_in_voxels" type="AABB" />
+			<description>
+				The colliders of the mesh blocks an edit of this area changes are rebuilt as soon as their meshes come back, skipping [member collision_update_delay]; one already waiting is built now. Call it with an edit that removes what something rests on, so it falls with the ground rather than after the delay.
+			</description>
+		</method>
 		<method name="is_area_meshed" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="area_in_voxels" type="AABB" />
@@ -212,6 +219,12 @@
 			<param index="0" name="position" type="Vector3i" />
 			<description>
 				Emitted when a mesh block gets unloaded. It is the counterpart of [signal mesh_block_entered].
+			</description>
+		</signal>
+		<signal name="collision_updated">
+			<param index="0" name="position" type="Vector3i" />
+			<description>
+				Emitted when a mesh block's collider is rebuilt (an edit), not when it's first built. Removing terrain doesn't wake bodies sleeping on it, so wake those over the block here. [param position] is in mesh blocks.
 			</description>
 		</signal>
 	</signals>

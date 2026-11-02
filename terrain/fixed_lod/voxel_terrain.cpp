@@ -2249,9 +2249,13 @@ void VoxelTerrain::apply_mesh_update(const VoxelEngine::BlockMeshOutput &ob) {
 	if (gen_collisions) {
 		// A block's first collider is built at once so freshly streamed ground is solid when its mesh appears; only
 		// rebuilds (edits) are put off, else a level's load would trickle colliders out at the frame budget.
-		if (_collision_update_delay == 0 || !block->has_collision_shape()) {
+		if (_collision_update_delay == 0 || !block->has_collision_shape() || block->collision_urgent) {
 			Ref<Shape3D> collision_shape = make_collision_shape_from_mesher_output(ob.surfaces, **_mesher);
 			set_block_collision_shape(*block, collision_shape, Time::get_singleton()->get_ticks_msec());
+			// Urgent until the mesh of the edit that asked has come back, not just one sent before it.
+			if (!block->is_in_update_list && block->pending_mesh_tasks == 0) {
+				block->collision_urgent = false;
+			}
 
 		} else {
 			// Built by process_deferred_collision_updates, within its frame budget, once the delay since the block's
@@ -2294,12 +2298,36 @@ void VoxelTerrain::set_block_collision_shape(VoxelMeshBlockVT &block, Ref<Shape3
 		debug_collisions = scene_tree->is_debugging_collisions_hint();
 	}
 
+	// A rebuild (an edit), not a block's first collider: what rested on the old one may have lost its support.
+	const bool rebuilt = block.has_collision_shape();
 	block.set_collision_shape(collision_shape, debug_collisions, this, _collision_margin);
 	block.set_collision_layer(_collision_layer);
 	block.set_collision_mask(_collision_mask);
 	block.last_collider_update_time = now;
 	block.deferred_collider_data = nullptr;
 	_stats.time_collision_builds_acc += collision_clock.get_elapsed_microseconds();
+	if (rebuilt) {
+		emit_signal(VoxelStringNames::get_singleton().collision_updated, block.position);
+	}
+}
+
+void VoxelTerrain::set_collision_urgent(const Box3i &box_in_voxels) {
+	// Edits schedule updates on neighbor blocks too, so pad the same way.
+	const Box3i mesh_box = box_in_voxels.padded(1).downscaled(get_mesh_block_size());
+	mesh_box.for_each_cell([this](Vector3i bpos) {
+		VoxelMeshBlockVT *block = _mesh_map.get_block(bpos);
+		if (block == nullptr) {
+			return;
+		}
+		block->collision_urgent = true;
+		// A rebuild already waiting is from an earlier mesh than the one coming, but newer than the collider.
+		if (block->deferred_collider_data != nullptr && _mesher.is_valid()) {
+			Ref<Shape3D> collision_shape =
+					make_collision_shape_from_mesher_output(*block->deferred_collider_data, **_mesher);
+			set_block_collision_shape(*block, collision_shape, Time::get_singleton()->get_ticks_msec());
+			block->set_collision_enabled(_generate_collisions && block->collision_viewers.get() > 0);
+		}
+	});
 }
 
 // Rebuilds the colliders put off by `collision_update_delay` whose delay has passed: at least one per call, then as
@@ -2673,6 +2701,10 @@ bool VoxelTerrain::_b_is_area_mesh_up_to_date(AABB aabb) const {
 	return is_area_mesh_up_to_date(Box3i(aabb.position, aabb.size));
 }
 
+void VoxelTerrain::_b_set_collision_urgent(AABB aabb) {
+	set_collision_urgent(Box3i(aabb.position, aabb.size));
+}
+
 void VoxelTerrain::_bind_methods() {
 	using Self = VoxelTerrain;
 
@@ -2746,6 +2778,9 @@ void VoxelTerrain::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_area_meshed", "area_in_voxels"), &Self::_b_is_area_meshed);
 	ClassDB::bind_method(
 			D_METHOD("is_area_mesh_up_to_date", "area_in_voxels"), &Self::_b_is_area_mesh_up_to_date
+	);
+	ClassDB::bind_method(
+			D_METHOD("set_collision_urgent", "area_in_voxels"), &Self::_b_set_collision_urgent
 	);
 
 	ClassDB::bind_method(D_METHOD("debug_set_draw_enabled", "enabled"), &Self::debug_set_draw_enabled);
@@ -2872,6 +2907,7 @@ void VoxelTerrain::_bind_methods() {
 
 	ADD_SIGNAL(MethodInfo("mesh_block_entered", PropertyInfo(Variant::VECTOR3I, "position")));
 	ADD_SIGNAL(MethodInfo("mesh_block_exited", PropertyInfo(Variant::VECTOR3I, "position")));
+	ADD_SIGNAL(MethodInfo("collision_updated", PropertyInfo(Variant::VECTOR3I, "position")));
 }
 
 } // namespace zylann::voxel

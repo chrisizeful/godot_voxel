@@ -40,6 +40,9 @@ public:
 	// (the latest one; earlier ones are superseded).
 	uint64_t last_collider_update_time = 0;
 	UniquePtr<VoxelMesher::Output> deferred_collider_data;
+	// Its next collider is built as soon as its mesh comes back, whatever `collision_update_delay` says (something
+	// rests on what an edit changed); cleared once no newer mesh is on its way.
+	bool collision_urgent = false;
 
 	// Will be true if the block has ever been processed by meshing (regardless of there being a mesh or not).
 	// This is needed to know if the area is loaded, in terms of collisions. If the game uses voxels directly for

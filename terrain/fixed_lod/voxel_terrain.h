@@ -295,6 +295,9 @@ private:
 
 	bool is_area_meshed(const Box3i &box_in_voxels) const;
 	bool is_area_mesh_up_to_date(const Box3i &box_in_voxels) const;
+	// The colliders of the mesh blocks an edit of this box changes are rebuilt as soon as their meshes come back,
+	// skipping `collision_update_delay` (and one already waiting is built now).
+	void set_collision_urgent(const Box3i &box_in_voxels);
 
 #ifdef TOOLS_ENABLED
 	void process_debug_draw();
@@ -325,6 +328,7 @@ private:
 	void _b_rpc_receive_area(PackedByteArray data);
 	bool _b_is_area_meshed(AABB aabb) const;
 	bool _b_is_area_mesh_up_to_date(AABB aabb) const;
+	void _b_set_collision_urgent(AABB aabb);
 
 	VolumeID _volume_id;
 
