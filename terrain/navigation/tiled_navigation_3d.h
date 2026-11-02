@@ -3,13 +3,15 @@
 
 #include "../../util/containers/std_unordered_map.h"
 #include "../../util/containers/std_vector.h"
+#include "../../util/godot/classes/array_mesh.h"
 #include "../../util/godot/classes/navigation_mesh.h"
 #include "../../util/godot/classes/navigation_mesh_source_geometry_data_3d.h"
 #include "../../util/godot/classes/node_3d.h"
+#include "../../util/godot/direct_mesh_instance.h"
 #include "../../util/godot/macros.h"
 #include "../../util/math/vector2i.h"
 
-ZN_GODOT_FORWARD_DECLARE(class NavigationRegion3D)
+ZN_GODOT_FORWARD_DECLARE(class StandardMaterial3D)
 
 namespace zylann::voxel {
 
@@ -169,7 +171,10 @@ protected:
 
 private:
 	struct Tile {
-		NavigationRegion3D *region = nullptr;
+		// Its region on the navigation server (not a node), and the navmesh drawn while navigation debugging is on.
+		RID region;
+		zylann::godot::DirectMeshInstance debug_mesh;
+		Ref<ArrayMesh> debug_arrays;
 		// Indices of triangles (into the fixed geometry's indices, divided by 3) and projected obstructions touching it.
 		StdVector<int32_t> static_triangles;
 		StdVector<int32_t> static_obstructions;
@@ -208,6 +213,13 @@ private:
 	AABB get_tile_bounds(Vector2i tile_pos) const;
 	float get_border_size() const;
 	Vector2i world_to_tile(const Vector3 &pos) const;
+	void free_tile(Tile &tile);
+	bool is_debug_drawn() const;
+	void make_debug_materials();
+	void apply_debug_materials(Tile &tile);
+	void update_tile_debug(Tile &tile, NavigationMesh *navmesh);
+	void update_debug_connections();
+	void _on_navigation_map_changed(RID map);
 	void start_bake(uint64_t key, Tile &tile);
 	void collect_bakes(bool wait);
 	void on_tile_baked(uint64_t key, uint32_t generation, Ref<NavigationMesh> navmesh, uint32_t bake_usec);
@@ -215,6 +227,14 @@ private:
 	static void _bind_methods();
 
 	Ref<NavigationMesh> _template_navmesh;
+	// As NavigationServer3D makes them for NavigationRegion3D, from the debug/shapes/navigation/3d project settings.
+	Ref<StandardMaterial3D> _debug_face_material;
+	Ref<StandardMaterial3D> _debug_face_disabled_material;
+	Ref<StandardMaterial3D> _debug_edge_material;
+	Ref<StandardMaterial3D> _debug_edge_disabled_material;
+	Ref<StandardMaterial3D> _debug_connections_material;
+	// The connections between tiles (and other regions), as NavigationRegion3D draws its own.
+	zylann::godot::DirectMeshInstance _debug_connections;
 	Ref<NavigationMeshSourceGeometryData3D> _static_geometry;
 	NodePath _source_geometry_root;
 	Ref<NavigationMeshSourceGeometryData3D> _parsed_geometry;

@@ -1,9 +1,13 @@
 #include "tiled_navigation_3d.h"
 #include "../../util/godot/classes/engine.h"
 #include "../../util/godot/core/array.h"
-#include "../../util/godot/classes/navigation_region_3d.h"
+#include "../../util/godot/classes/array_mesh.h"
 #include "../../util/godot/classes/navigation_server_3d.h"
 #include "../../util/godot/classes/object.h"
+#include "../../util/godot/classes/project_settings.h"
+#include "../../util/godot/core/callable_mp.h"
+#include "../../util/godot/core/random_pcg.h"
+#include "../../util/godot/classes/standard_material_3d.h"
 #include "../../util/godot/classes/world_3d.h"
 #include "../../util/profiling.h"
 #include "../../util/profiling_clock.h"
@@ -235,10 +239,12 @@ void TiledNavigation3D::set_enabled(bool p_enabled) {
 		return;
 	}
 	_enabled = p_enabled;
+	NavigationServer3D &ns = *NavigationServer3D::get_singleton();
 	for (auto &it : _tiles) {
-		if (it.second.region != nullptr) {
-			it.second.region->set_enabled(_enabled);
+		if (it.second.region.is_valid()) {
+			ns.region_set_enabled(it.second.region, _enabled);
 		}
+		apply_debug_materials(it.second);
 	}
 	update_processing_state();
 }
@@ -326,8 +332,8 @@ int TiledNavigation3D::get_max_concurrent_bakes() const {
 void TiledNavigation3D::set_navigation_layers(uint32_t layers) {
 	_navigation_layers = layers;
 	for (auto &it : _tiles) {
-		if (it.second.region != nullptr) {
-			it.second.region->set_navigation_layers(layers);
+		if (it.second.region.is_valid()) {
+			NavigationServer3D::get_singleton()->region_set_navigation_layers(it.second.region, layers);
 		}
 	}
 }
@@ -390,8 +396,8 @@ float TiledNavigation3D::get_obstacle_settle_time() const {
 void TiledNavigation3D::set_use_edge_connections(bool enable) {
 	_use_edge_connections = enable;
 	for (auto &it : _tiles) {
-		if (it.second.region != nullptr) {
-			it.second.region->set_use_edge_connections(enable);
+		if (it.second.region.is_valid()) {
+			NavigationServer3D::get_singleton()->region_set_use_edge_connections(it.second.region, enable);
 		}
 	}
 }
@@ -474,12 +480,31 @@ void TiledNavigation3D::_notification(int p_what) {
 		case NOTIFICATION_ENTER_TREE:
 			update_processing_state();
 			request_layout();
+			if (is_debug_drawn()) {
+				NavigationServer3D::get_singleton()->connect(
+						"map_changed", callable_mp(this, &TiledNavigation3D::_on_navigation_map_changed));
+			}
 			break;
 		case NOTIFICATION_INTERNAL_PROCESS:
 			process(get_process_delta_time());
 			break;
-		case NOTIFICATION_EXIT_TREE:
+		case NOTIFICATION_EXIT_TREE: {
 			reset_tiles();
+			_debug_connections.destroy();
+			const Callable on_map_changed = callable_mp(this, &TiledNavigation3D::_on_navigation_map_changed);
+			if (NavigationServer3D::get_singleton()->is_connected("map_changed", on_map_changed)) {
+				NavigationServer3D::get_singleton()->disconnect("map_changed", on_map_changed);
+			}
+		} break;
+		case NOTIFICATION_VISIBILITY_CHANGED:
+			for (auto &it : _tiles) {
+				if (it.second.debug_mesh.is_valid()) {
+					it.second.debug_mesh.set_visible(is_visible_in_tree());
+				}
+			}
+			if (_debug_connections.is_valid()) {
+				_debug_connections.set_visible(is_visible_in_tree());
+			}
 			break;
 		default:
 			break;
@@ -496,9 +521,7 @@ Vector3 TiledNavigation3D::get_grid_origin() const {
 
 void TiledNavigation3D::reset_tiles() {
 	for (auto &it : _tiles) {
-		if (it.second.region != nullptr) {
-			it.second.region->queue_free();
-		}
+		free_tile(it.second);
 	}
 	_tiles.clear();
 	// Bakes still running find their tile gone and are dropped.
@@ -536,18 +559,209 @@ TiledNavigation3D::Tile &TiledNavigation3D::get_or_create_tile(Vector2i tile_pos
 		return it->second;
 	}
 	Tile &tile = _tiles[key];
-	tile.region = memnew(NavigationRegion3D);
-	// Tiles are baked in world space and meet edge to edge on a shared cell grid, which the map merges by itself.
-	tile.region->set_as_top_level(true);
-	tile.region->set_use_edge_connections(_use_edge_connections);
-	tile.region->set_navigation_layers(_navigation_layers);
-	tile.region->set_enabled(_enabled);
-	add_child(tile.region);
-	tile.region->set_global_transform(Transform3D());
-	if (_navigation_map.is_valid()) {
-		tile.region->set_navigation_map(_navigation_map);
-	}
+	// Tiles are baked in world space (an identity transform) and meet edge to edge on a shared cell grid, which the map
+	// merges by itself.
+	NavigationServer3D &ns = *NavigationServer3D::get_singleton();
+	tile.region = ns.region_create();
+	ns.region_set_owner_id(tile.region, get_instance_id());
+	ns.region_set_use_edge_connections(tile.region, _use_edge_connections);
+	ns.region_set_navigation_layers(tile.region, _navigation_layers);
+	ns.region_set_enabled(tile.region, _enabled);
+	ns.region_set_map(tile.region, get_navigation_map());
 	return tile;
+}
+
+void TiledNavigation3D::free_tile(Tile &tile) {
+	if (tile.region.is_valid()) {
+		zylann::godot::free_navigation_server_rid(*NavigationServer3D::get_singleton(), tile.region);
+		tile.region = RID();
+	}
+	tile.debug_mesh.destroy();
+	tile.debug_arrays.unref();
+}
+
+// Drawn as NavigationRegion3D draws its navmesh: in the editor, and in a game run with Visible Navigation.
+bool TiledNavigation3D::is_debug_drawn() const {
+	if (!is_inside_tree()) {
+		return false;
+	}
+#ifdef TOOLS_ENABLED
+	if (Engine::get_singleton()->is_editor_hint()) {
+		return true;
+	}
+#endif
+	return get_tree()->is_debugging_navigation_hint();
+}
+
+void TiledNavigation3D::make_debug_materials() {
+	if (_debug_face_material.is_valid()) {
+		return;
+	}
+	ProjectSettings &settings = *ProjectSettings::get_singleton();
+	const String prefix = "debug/shapes/navigation/3d/";
+	auto make = [&settings, &prefix](const char *color_setting, bool transparent, const char *xray_setting) {
+		Ref<StandardMaterial3D> material;
+		material.instantiate();
+		material->set_shading_mode(StandardMaterial3D::SHADING_MODE_UNSHADED);
+		if (transparent) {
+			material->set_transparency(StandardMaterial3D::TRANSPARENCY_ALPHA);
+		}
+		material->set_albedo(settings.get_setting(prefix + String(color_setting)));
+		material->set_flag(StandardMaterial3D::FLAG_DISABLE_FOG, true);
+		if (xray_setting != nullptr && bool(settings.get_setting(prefix + String(xray_setting)))) {
+			material->set_flag(StandardMaterial3D::FLAG_DISABLE_DEPTH_TEST, true);
+		}
+		return material;
+	};
+	_debug_face_material = make("geometry_face_color", true, nullptr);
+	_debug_face_material->set_cull_mode(StandardMaterial3D::CULL_DISABLED);
+	if (bool(settings.get_setting(prefix + String("enable_geometry_face_random_color")))) {
+		_debug_face_material->set_flag(StandardMaterial3D::FLAG_SRGB_VERTEX_COLOR, true);
+		_debug_face_material->set_flag(StandardMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+	}
+	_debug_face_disabled_material = make("geometry_face_disabled_color", true, nullptr);
+	_debug_edge_material = make("geometry_edge_color", false, "enable_edge_lines_xray");
+	_debug_edge_disabled_material = make("geometry_edge_disabled_color", false, "enable_edge_lines_xray");
+	_debug_connections_material = make("edge_connection_color", false, "enable_edge_connections_xray");
+	_debug_connections_material->set_render_priority(StandardMaterial3D::RENDER_PRIORITY_MAX - 2);
+}
+
+void TiledNavigation3D::apply_debug_materials(Tile &tile) {
+	if (tile.debug_arrays.is_null()) {
+		return;
+	}
+	tile.debug_arrays->surface_set_material(0, _enabled ? _debug_face_material : _debug_face_disabled_material);
+	if (tile.debug_arrays->get_surface_count() > 1) {
+		tile.debug_arrays->surface_set_material(1, _enabled ? _debug_edge_material : _debug_edge_disabled_material);
+	}
+}
+
+void TiledNavigation3D::update_tile_debug(Tile &tile, NavigationMesh *navmesh) {
+	if (!is_debug_drawn() || navmesh == nullptr || navmesh->get_polygon_count() == 0) {
+		tile.debug_mesh.destroy();
+		tile.debug_arrays.unref();
+		return;
+	}
+	make_debug_materials();
+	ProjectSettings &settings = *ProjectSettings::get_singleton();
+	const Color face_color = settings.get_setting("debug/shapes/navigation/3d/geometry_face_color");
+	const bool random_faces = settings.get_setting("debug/shapes/navigation/3d/enable_geometry_face_random_color");
+	const bool edge_lines = settings.get_setting("debug/shapes/navigation/3d/enable_edge_lines");
+
+	const auto vertices = navmesh->get_vertices();
+	PackedVector3Array face_points;
+	PackedColorArray face_colors;
+	PackedVector3Array edge_points;
+	// Same tints every rebake, so a tile doesn't flicker as it rebakes.
+	RandomPCG rand;
+	rand.seed(1);
+	for (int p = 0; p < navmesh->get_polygon_count(); ++p) {
+		const auto polygon = navmesh->get_polygon(p);
+		if (polygon.size() < 3) {
+			continue;
+		}
+		Color color = face_color;
+		if (random_faces) {
+			// As NavigationRegion3D tints them: hue and value moved a little from the setting's.
+			color.set_hsv(face_color.get_h() + rand.random(-1.0, 1.0) * 0.1, face_color.get_s(),
+					face_color.get_v() + rand.random(-1.0, 1.0) * 0.2);
+			color.a = face_color.a;
+		}
+		for (int i = 1; i + 1 < polygon.size(); ++i) {
+			face_points.push_back(vertices[polygon[0]]);
+			face_points.push_back(vertices[polygon[i]]);
+			face_points.push_back(vertices[polygon[i + 1]]);
+			for (int k = 0; k < 3 && random_faces; ++k) {
+				face_colors.push_back(color);
+			}
+		}
+		if (edge_lines) {
+			for (int i = 0; i < polygon.size(); ++i) {
+				edge_points.push_back(vertices[polygon[i]]);
+				edge_points.push_back(vertices[polygon[(i + 1) % polygon.size()]]);
+			}
+		}
+	}
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = face_points;
+	if (random_faces) {
+		arrays[Mesh::ARRAY_COLOR] = face_colors;
+	}
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	if (!edge_points.is_empty()) {
+		Array lines;
+		lines.resize(Mesh::ARRAY_MAX);
+		lines[Mesh::ARRAY_VERTEX] = edge_points;
+		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_LINES, lines);
+	}
+	tile.debug_arrays = mesh;
+	apply_debug_materials(tile);
+	if (!tile.debug_mesh.is_valid()) {
+		tile.debug_mesh.create();
+		tile.debug_mesh.set_world(get_world_3d().ptr());
+		tile.debug_mesh.set_transform(Transform3D());
+		tile.debug_mesh.set_cast_shadows_setting(RenderingServerEnums::SHADOW_CASTING_SETTING_OFF);
+		tile.debug_mesh.set_visible(is_visible_in_tree());
+	}
+	tile.debug_mesh.set_mesh(mesh);
+}
+
+void TiledNavigation3D::_on_navigation_map_changed(RID map) {
+	if (map == get_navigation_map()) {
+		update_debug_connections();
+	}
+}
+
+// Every tile's connections to other regions, drawn as NavigationRegion3D draws its own.
+void TiledNavigation3D::update_debug_connections() {
+	NavigationServer3D &ns = *NavigationServer3D::get_singleton();
+	const RID map = get_navigation_map();
+	const bool shown = is_debug_drawn() && _use_edge_connections && map.is_valid() && ns.map_get_use_edge_connections(map) &&
+			bool(ProjectSettings::get_singleton()->get_setting("debug/shapes/navigation/3d/enable_edge_connections"));
+	PackedVector3Array points;
+	if (shown) {
+		const real_t half_margin = ns.map_get_edge_connection_margin(map) * 0.5;
+		for (auto &it : _tiles) {
+			const RID region = it.second.region;
+			if (!region.is_valid()) {
+				continue;
+			}
+			for (int i = 0; i < ns.region_get_connections_count(region); ++i) {
+				const Vector3 start = ns.region_get_connection_pathway_start(region, i);
+				const Vector3 end = ns.region_get_connection_pathway_end(region, i);
+				const Vector3 right = start.direction_to(end).cross(Vector3(0, 1, 0));
+				points.push_back(start);
+				points.push_back(end);
+				points.push_back(start - right * half_margin);
+				points.push_back(start + right * half_margin);
+				points.push_back(end + right * half_margin);
+				points.push_back(end - right * half_margin);
+			}
+		}
+	}
+	if (points.is_empty()) {
+		_debug_connections.destroy();
+		return;
+	}
+	make_debug_materials();
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = points;
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_LINES, arrays);
+	mesh->surface_set_material(0, _debug_connections_material);
+	if (!_debug_connections.is_valid()) {
+		_debug_connections.create();
+		_debug_connections.set_world(get_world_3d().ptr());
+		_debug_connections.set_transform(Transform3D());
+		_debug_connections.set_cast_shadows_setting(RenderingServerEnums::SHADOW_CASTING_SETTING_OFF);
+		_debug_connections.set_visible(is_visible_in_tree());
+	}
+	_debug_connections.set_mesh(mesh);
 }
 
 void TiledNavigation3D::mark_dirty(Tile &tile) {
@@ -944,8 +1158,9 @@ void TiledNavigation3D::on_tile_baked(uint64_t key, uint32_t generation, Ref<Nav
 	_bake_usec_max = MAX(_bake_usec_max, bake_usec);
 
 	ProfilingClock clock;
-	tile.region->set_navigation_mesh(navmesh);
+	NavigationServer3D::get_singleton()->region_set_navigation_mesh(tile.region, navmesh);
 	_apply_usec_max = MAX(_apply_usec_max, uint32_t(clock.get_elapsed_microseconds()));
+	update_tile_debug(tile, navmesh.ptr());
 
 	if (!tile.changed_while_baking) {
 		tile.dirty_for = -1.f;
